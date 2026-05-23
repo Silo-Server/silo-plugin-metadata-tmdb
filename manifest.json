@@ -1,0 +1,37 @@
+{
+  "plugin_id": "silo.tmdb",
+  "version": "1.2.14",
+  "checksum": "__CHECKSUM__",
+  "silo_api_version": "v1",
+  "supported_platforms": [
+    {
+      "os": "darwin",
+      "arch": "arm64"
+    },
+    {
+      "os": "linux",
+      "arch": "amd64"
+    },
+    {
+      "os": "linux",
+      "arch": "arm64"
+    }
+  ],
+  "capabilities": [
+    {
+      "type": "metadata_provider.v1",
+      "id": "tmdb",
+      "display_name": "TMDB",
+      "description": "The Movie Database — metadata for movies and TV series.",
+      "metadata": {
+        "default_priority": {
+          "movie": 2,
+          "series": 3,
+          "season": 3,
+          "episode": 3
+        }
+      }
+    }
+  ],
+  "global_config_schema": []
+}
