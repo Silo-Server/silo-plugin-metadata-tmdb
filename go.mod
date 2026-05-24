@@ -7,7 +7,7 @@ require (
 	google.golang.org/protobuf v1.36.11
 )
 
-require google.golang.org/grpc v1.75.1 // indirect
+require google.golang.org/grpc v1.79.3 // indirect
 
 require (
 	github.com/Silo-Server/silo-plugin-sdk v0.4.0
