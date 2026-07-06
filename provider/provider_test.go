@@ -321,6 +321,146 @@ func TestGetMetadataReturnsAlternativeTitlesAndMarksNativeFallback(t *testing.T)
 	}
 }
 
+func TestGetMetadataMovieReturnsSortedVideos(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch r.URL.Path {
+		case "/configuration":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"images": map[string]any{
+					"secure_base_url": serverURL(t, r) + "/images/",
+				},
+			})
+		case "/movie/42":
+			appended := r.URL.Query().Get("append_to_response")
+			if !strings.Contains(appended, "videos") {
+				t.Errorf("append_to_response = %q, want videos included", appended)
+			}
+			if !strings.Contains(appended, "alternative_titles") {
+				t.Errorf("append_to_response = %q, want alternative_titles preserved", appended)
+			}
+			if got := r.URL.Query().Get("include_video_language"); got != "en-US,en,null" {
+				t.Errorf("include_video_language = %q, want en-US,en,null", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    42,
+				"title": "Movie",
+				"videos": map[string]any{
+					"results": []map[string]any{
+						{"id": "clip-1", "iso_639_1": "en", "key": "clipKey", "name": "A Clip", "site": "YouTube", "size": 720, "type": "Clip", "official": true},
+						{"id": "fan-trailer", "iso_639_1": "en", "key": "fanKey", "name": "Fan Trailer", "site": "YouTube", "size": 1080, "type": "Trailer", "official": false},
+						{"id": "bts-1", "iso_639_1": "en", "key": "btsKey", "name": "Making Of", "site": "Vimeo", "size": 1080, "type": "Behind the Scenes", "official": true},
+						{"id": "broken", "site": "YouTube", "type": "Trailer"},
+						{"id": "official-trailer", "iso_639_1": "en", "key": "offKey", "name": "Official Trailer", "site": "YouTube", "size": 2160, "type": "Trailer", "official": true, "published_at": "2024-01-15T00:00:00.000Z"},
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	p := newTMDBTestProvider(server.URL)
+
+	result, err := p.GetMetadata(context.Background(), metadata.MetadataRequest{
+		ProviderIDs: map[string]string{"tmdb": "42"},
+		ContentType: "movie",
+		Language:    "en",
+	})
+	if err != nil {
+		t.Fatalf("GetMetadata() error = %v", err)
+	}
+
+	// The entry without a key is dropped; official trailers sort first, then
+	// other trailers, then the rest in TMDB order.
+	wantOrder := []string{"official-trailer", "fan-trailer", "clip-1", "bts-1"}
+	if len(result.Videos) != len(wantOrder) {
+		t.Fatalf("len(Videos) = %d, want %d", len(result.Videos), len(wantOrder))
+	}
+	for i, want := range wantOrder {
+		if got := result.Videos[i].ProviderKey; got != want {
+			t.Fatalf("Videos[%d].ProviderKey = %q, want %q", i, got, want)
+		}
+	}
+
+	want := metadata.VideoResult{
+		ProviderKey: "official-trailer",
+		Kind:        "trailer",
+		Site:        "youtube",
+		SiteKey:     "offKey",
+		Name:        "Official Trailer",
+		Language:    "en",
+		IsOfficial:  true,
+		SizeHint:    2160,
+		PublishedAt: "2024-01-15T00:00:00.000Z",
+	}
+	if result.Videos[0] != want {
+		t.Fatalf("Videos[0] = %+v, want %+v", result.Videos[0], want)
+	}
+
+	if got := result.Videos[3]; got.Kind != "behind_the_scenes" || got.Site != "vimeo" {
+		t.Fatalf("Videos[3] kind/site = %q/%q, want behind_the_scenes/vimeo", got.Kind, got.Site)
+	}
+}
+
+func TestGetMetadataSeriesReturnsVideos(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch r.URL.Path {
+		case "/configuration":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"images": map[string]any{
+					"secure_base_url": serverURL(t, r) + "/images/",
+				},
+			})
+		case "/tv/77":
+			if got := r.URL.Query().Get("append_to_response"); !strings.Contains(got, "videos") {
+				t.Errorf("append_to_response = %q, want videos included", got)
+			}
+			if got := r.URL.Query().Get("include_video_language"); got != "en-US,en,null" {
+				t.Errorf("include_video_language = %q, want en-US,en,null", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":   77,
+				"name": "Series",
+				"videos": map[string]any{
+					"results": []map[string]any{
+						{"id": "s-teaser", "iso_639_1": "en", "key": "teaserKey", "name": "Season Teaser", "site": "YouTube", "size": 1080, "type": "Teaser", "official": true},
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	p := newTMDBTestProvider(server.URL)
+
+	result, err := p.GetMetadata(context.Background(), metadata.MetadataRequest{
+		ProviderIDs: map[string]string{"tmdb": "77"},
+		ContentType: "series",
+		Language:    "en",
+	})
+	if err != nil {
+		t.Fatalf("GetMetadata() error = %v", err)
+	}
+
+	if len(result.Videos) != 1 {
+		t.Fatalf("len(Videos) = %d, want 1", len(result.Videos))
+	}
+	if got := result.Videos[0]; got.Kind != "teaser" || got.SiteKey != "teaserKey" {
+		t.Fatalf("Videos[0] = %+v, want teaser/teaserKey", got)
+	}
+}
+
 func TestGetImagesReturnsRawPaths(t *testing.T) {
 	t.Parallel()
 

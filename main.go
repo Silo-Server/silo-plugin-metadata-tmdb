@@ -402,6 +402,7 @@ func metadataItemFromResult(result *metadata.MetadataResult, itemType string) (*
 		TitleAliasesComplete: result.TitleAliasesComplete,
 		TitleLanguage:        result.TitleLanguage,
 		TitleIsFallback:      result.TitleIsFallback,
+		Videos:               videosToRecords(result.Videos),
 	}, nil
 }
 
@@ -494,6 +495,28 @@ func peopleToRecords(people []models.ItemPerson) []*pluginv1.PersonRecord {
 			PlexGuid:       person.PlexGUID,
 			PhotoPath:      tmdbCanonicalPath("profile", person.PhotoPath),
 			PhotoThumbhash: person.PhotoThumbhash,
+		})
+	}
+	return records
+}
+
+func videosToRecords(videos []metadata.VideoResult) []*pluginv1.VideoRecord {
+	if len(videos) == 0 {
+		return nil
+	}
+
+	records := make([]*pluginv1.VideoRecord, 0, len(videos))
+	for _, video := range videos {
+		records = append(records, &pluginv1.VideoRecord{
+			ProviderKey: video.ProviderKey,
+			Kind:        video.Kind,
+			Site:        video.Site,
+			SiteKey:     video.SiteKey,
+			Name:        video.Name,
+			Language:    video.Language,
+			IsOfficial:  video.IsOfficial,
+			SizeHint:    int32(video.SizeHint),
+			PublishedAt: video.PublishedAt,
 		})
 	}
 	return records

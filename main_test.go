@@ -10,6 +10,7 @@ import (
 
 	pluginv1 "github.com/Silo-Server/silo-plugin-sdk/pkg/pluginproto/silo/plugin/v1"
 	"github.com/Silo-Server/silo-plugin-tmdb/provider"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
@@ -242,6 +243,81 @@ func TestMetadataServerGetMetadata_IncludesReleaseDate(t *testing.T) {
 
 	if got := metadataItemReleaseDate(t, resp.GetItem()); got != "2024-01-02" {
 		t.Fatalf("release_date = %q, want 2024-01-02", got)
+	}
+}
+
+func TestMetadataServerGetMetadata_IncludesVideos(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch r.URL.Path {
+		case "/configuration":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"images": map[string]any{
+					"secure_base_url": "https://image.tmdb.org/t/p/",
+				},
+			})
+		case "/movie/123":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    123,
+				"title": "Example Movie",
+				"videos": map[string]any{
+					"results": []map[string]any{
+						{
+							"id":           "video-1",
+							"iso_639_1":    "en",
+							"key":          "dQw4w9WgXcQ",
+							"name":         "Official Trailer",
+							"site":         "YouTube",
+							"size":         1080,
+							"type":         "Trailer",
+							"official":     true,
+							"published_at": "2024-01-15T00:00:00.000Z",
+						},
+					},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := provider.NewClient(1000)
+	client.SetBaseURL(server.URL)
+
+	ms := &metadataServer{
+		runtime: &runtimeServer{
+			provider: provider.NewProviderWithClient(client),
+		},
+	}
+
+	resp, err := ms.GetMetadata(context.Background(), &pluginv1.GetMetadataRequest{
+		ProviderId: "123",
+		ItemType:   "movie",
+	})
+	if err != nil {
+		t.Fatalf("GetMetadata() error = %v", err)
+	}
+
+	videos := resp.GetItem().GetVideos()
+	if len(videos) != 1 {
+		t.Fatalf("len(videos) = %d, want 1", len(videos))
+	}
+
+	want := &pluginv1.VideoRecord{
+		ProviderKey: "video-1",
+		Kind:        "trailer",
+		Site:        "youtube",
+		SiteKey:     "dQw4w9WgXcQ",
+		Name:        "Official Trailer",
+		Language:    "en",
+		IsOfficial:  true,
+		SizeHint:    1080,
+		PublishedAt: "2024-01-15T00:00:00.000Z",
+	}
+	if !proto.Equal(videos[0], want) {
+		t.Fatalf("videos[0] = %+v, want %+v", videos[0], want)
 	}
 }
 

@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -450,6 +451,7 @@ func (p *Provider) getMovieMetadata(ctx context.Context, id int, lang string) (*
 	result.BackdropPath = movie.BackdropPath
 
 	result.People = convertPeople(movie.Credits)
+	result.Videos = convertVideos(movie.Videos)
 
 	return result, nil
 }
@@ -513,6 +515,7 @@ func (p *Provider) getTVMetadata(ctx context.Context, id int, lang string) (*met
 	result.BackdropPath = tv.BackdropPath
 
 	result.People = convertPeople(tv.Credits)
+	result.Videos = convertVideos(tv.Videos)
 
 	return result, nil
 }
@@ -759,6 +762,66 @@ func convertPeople(credits *Credits) []models.ItemPerson {
 		})
 	}
 	return people
+}
+
+// videoKind normalizes a TMDB video type to Silo's lowercase snake_case kind.
+func videoKind(tmdbType string) string {
+	switch tmdbType {
+	case "Trailer":
+		return "trailer"
+	case "Teaser":
+		return "teaser"
+	case "Featurette":
+		return "featurette"
+	case "Clip":
+		return "clip"
+	case "Behind the Scenes":
+		return "behind_the_scenes"
+	case "Bloopers":
+		return "bloopers"
+	default:
+		return "other"
+	}
+}
+
+// videoSortRank orders official trailers first, then other trailers, then
+// everything else. TMDB order is preserved within each group.
+func videoSortRank(v metadata.VideoResult) int {
+	switch {
+	case v.Kind == "trailer" && v.IsOfficial:
+		return 0
+	case v.Kind == "trailer":
+		return 1
+	default:
+		return 2
+	}
+}
+
+func convertVideos(w *VideosWrapper) []metadata.VideoResult {
+	if w == nil || len(w.Results) == 0 {
+		return nil
+	}
+	videos := make([]metadata.VideoResult, 0, len(w.Results))
+	for _, v := range w.Results {
+		if v.Key == "" || v.Site == "" {
+			continue
+		}
+		videos = append(videos, metadata.VideoResult{
+			ProviderKey: v.ID,
+			Kind:        videoKind(v.Type),
+			Site:        strings.ToLower(v.Site),
+			SiteKey:     v.Key,
+			Name:        v.Name,
+			Language:    v.ISO639_1,
+			IsOfficial:  v.Official,
+			SizeHint:    v.Size,
+			PublishedAt: v.PublishedAt,
+		})
+	}
+	sort.SliceStable(videos, func(i, j int) bool {
+		return videoSortRank(videos[i]) < videoSortRank(videos[j])
+	})
+	return videos
 }
 
 func keywordNames(records []Keyword) []string {

@@ -101,6 +101,21 @@ type MetadataResult struct {
 	// ShowStatus is the TMDB series lifecycle status verbatim ("Returning
 	// Series", "Ended", "Canceled", ...); the host normalizes spellings.
 	ShowStatus string
+	Videos     []VideoResult
+}
+
+// VideoResult carries a remote promotional/supplemental video (trailer,
+// teaser, featurette, ...) hosted on an external site such as YouTube.
+type VideoResult struct {
+	ProviderKey string // Provider-scoped video ID (e.g. TMDB video id)
+	Kind        string // Normalized kind: "trailer", "teaser", "featurette", ...
+	Site        string // Lowercase hosting site, e.g. "youtube", "vimeo"
+	SiteKey     string // Site-specific video key
+	Name        string
+	Language    string // ISO 639-1 code
+	IsOfficial  bool
+	SizeHint    int // e.g. 1080
+	PublishedAt string
 }
 
 // Ratings holds ratings from multiple sources.

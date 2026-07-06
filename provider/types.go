@@ -114,6 +114,7 @@ type MovieDetail struct {
 	Keywords            *MovieKeywords          `json:"keywords"`
 	ReleaseDates        *ReleaseDatesWrapper    `json:"release_dates"`
 	AlternativeTitles   *MovieAlternativeTitles `json:"alternative_titles"`
+	Videos              *VideosWrapper          `json:"videos"`
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +154,7 @@ type TVDetail struct {
 	Keywords            *TVKeywords            `json:"keywords"`
 	ContentRatings      *ContentRatingsWrapper `json:"content_ratings"`
 	AlternativeTitles   *TVAlternativeTitles   `json:"alternative_titles"`
+	Videos              *VideosWrapper         `json:"videos"`
 }
 
 type AlternativeTitle struct {
@@ -421,6 +423,29 @@ type ContentRatingsWrapper struct {
 type ContentRating struct {
 	ISO3166_1 string `json:"iso_3166_1"`
 	Rating    string `json:"rating"`
+}
+
+// ---------------------------------------------------------------------------
+// Videos (from append_to_response=videos)
+// ---------------------------------------------------------------------------
+
+// VideosWrapper wraps video results returned by append_to_response=videos.
+type VideosWrapper struct {
+	Results []Video `json:"results"`
+}
+
+// Video is a single promotional/supplemental video (trailer, teaser, etc.).
+type Video struct {
+	ID          string `json:"id"`
+	ISO639_1    string `json:"iso_639_1"`
+	ISO3166_1   string `json:"iso_3166_1"`
+	Key         string `json:"key"`
+	Name        string `json:"name"`
+	Site        string `json:"site"` // e.g. "YouTube", "Vimeo"
+	Size        int    `json:"size"` // e.g. 1080
+	Type        string `json:"type"` // e.g. "Trailer", "Teaser", "Featurette"
+	Official    bool   `json:"official"`
+	PublishedAt string `json:"published_at"`
 }
 
 // ---------------------------------------------------------------------------
