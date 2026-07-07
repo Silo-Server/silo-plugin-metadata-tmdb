@@ -374,6 +374,7 @@ func (p *Provider) getTVMetadata(ctx context.Context, id int, lang string) (*met
 		SeasonCount:      tv.NumberOfSeasons,
 		FirstAirDate:     tv.FirstAirDate,
 		LastAirDate:      tv.LastAirDate,
+		ShowStatus:       tv.Status,
 		ProviderIDs:      map[string]string{"tmdb": strconv.Itoa(tv.ID)},
 	}
 

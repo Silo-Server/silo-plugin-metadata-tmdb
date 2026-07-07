@@ -392,6 +392,7 @@ func metadataItemFromResult(result *metadata.MetadataResult, itemType string) (*
 		FirstAirDate:      result.FirstAirDate,
 		LastAirDate:       result.LastAirDate,
 		ReleaseDate:       result.ReleaseDate,
+		Status:            result.ShowStatus,
 		People:            peopleToRecords(result.People),
 	}, nil
 }

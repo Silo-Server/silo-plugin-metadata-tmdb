@@ -82,6 +82,9 @@ type MetadataResult struct {
 	SeasonCount       int
 	FirstAirDate      string
 	LastAirDate       string
+	// ShowStatus is the TMDB series lifecycle status verbatim ("Returning
+	// Series", "Ended", "Canceled", ...); the host normalizes spellings.
+	ShowStatus string
 }
 
 // Ratings holds ratings from multiple sources.
