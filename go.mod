@@ -10,7 +10,7 @@ require (
 require google.golang.org/grpc v1.75.1 // indirect
 
 require (
-	github.com/Silo-Server/silo-plugin-sdk v0.8.1
+	github.com/Silo-Server/silo-plugin-sdk v0.9.0
 	github.com/fatih/color v1.13.0 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/hashicorp/go-hclog v1.6.3 // indirect

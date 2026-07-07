@@ -629,3 +629,59 @@ func serverURL(t *testing.T, r *http.Request) string {
 	t.Helper()
 	return "http://" + r.Host
 }
+
+func TestGetTVMetadataCarriesShowStatus(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch r.URL.Path {
+		case "/configuration":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"images": map[string]any{
+					"secure_base_url": serverURL(t, r) + "/images/",
+				},
+			})
+		case "/tv/77":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":                77,
+				"name":              "Series",
+				"overview":          "Overview",
+				"original_language": "en",
+				"status":            "Returning Series",
+				"genres":            []any{},
+				"networks":          []any{},
+				"seasons":           []any{},
+				"credits": map[string]any{
+					"cast": []any{},
+					"crew": []any{},
+				},
+				"external_ids": map[string]any{},
+				"images":       map[string]any{},
+				"content_ratings": map[string]any{
+					"results": []any{},
+				},
+			})
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	p := newTMDBTestProvider(server.URL)
+	result, err := p.GetMetadata(context.Background(), metadata.MetadataRequest{
+		ProviderIDs: map[string]string{"tmdb": "77"},
+		ContentType: "series",
+		Language:    "en",
+	})
+	if err != nil {
+		t.Fatalf("GetMetadata() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("GetMetadata() returned nil result")
+	}
+	if result.ShowStatus != "Returning Series" {
+		t.Fatalf("ShowStatus = %q, want %q", result.ShowStatus, "Returning Series")
+	}
+}
