@@ -3,6 +3,19 @@
   "version": "1.2.17",
   "checksum": "__CHECKSUM__",
   "silo_api_version": "v1",
+  "presentation": {
+    "display_name": "TMDB Metadata",
+    "summary": "Fetch movie and TV metadata and artwork from The Movie Database.",
+    "description_markdown": "Provides metadata for movies, series, seasons, and episodes, plus image resolution for TMDB artwork stored by Silo. It is a general-purpose first-party provider for movie and television libraries.",
+    "setup_markdown": "TMDB Metadata is installed as a default Silo plugin. Add or enable **TMDB** in a library's metadata provider chain; no plugin-specific configuration is required.",
+    "homepage_url": "https://www.themoviedb.org",
+    "source_url": "https://github.com/Silo-Server/silo-plugin-tmdb",
+    "support_url": "https://github.com/Silo-Server/silo-plugin-tmdb/issues",
+    "changelog_url": "https://github.com/Silo-Server/silo-plugin-tmdb/releases",
+    "publisher_name": "Silo",
+    "publisher_url": "https://github.com/Silo-Server",
+    "license_spdx": "AGPL-3.0-or-later"
+  },
   "supported_platforms": [
     {
       "os": "darwin",
