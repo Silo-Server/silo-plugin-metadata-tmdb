@@ -25,4 +25,4 @@ This product uses the TMDB API but is not endorsed or certified by TMDB. All met
 
 ## License
 
-`silo-plugin-tmdb` is licensed under `AGPL-3.0-or-later`. See [LICENSE](LICENSE).
+`silo-plugins-metadata-tmdb` is licensed under `AGPL-3.0-or-later`. See [LICENSE](LICENSE).
