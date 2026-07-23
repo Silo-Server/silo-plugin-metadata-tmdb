@@ -309,6 +309,9 @@ func TestGetMetadataReturnsAlternativeTitlesAndMarksNativeFallback(t *testing.T)
 	if result == nil || !result.TitleIsFallback || result.TitleLanguage != "ja" {
 		t.Fatalf("fallback title metadata = %#v", result)
 	}
+	if !result.TitleAliasesComplete {
+		t.Fatal("full TMDB detail response must mark title aliases complete")
+	}
 	found := false
 	for _, alias := range result.TitleAliases {
 		found = found || alias.Title == "10 Tokyo Warriors" && alias.Kind == "alternate" && alias.Language == ""
