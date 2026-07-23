@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Silo-Server/silo-plugin-tmdb/metadata"
@@ -210,6 +211,110 @@ func TestTMDBLocalizedRequestsUseEnglishUSForEnglish(t *testing.T) {
 				t.Fatalf("invoke error = %v", err)
 			}
 		})
+	}
+}
+
+func TestSearchReturnsLocalizedAndOriginalTitles(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/configuration":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"images": map[string]any{"secure_base_url": serverURL(t, r) + "/images/"},
+			})
+		case "/search/movie":
+			if got := r.URL.Query().Get("query"); got != "Ten Tricks" {
+				t.Fatalf("query = %q, want Ten Tricks", got)
+			}
+			if got := r.URL.Query().Get("language"); got != "en-US" {
+				t.Fatalf("language = %q, want en-US", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"results": []map[string]any{{
+					"id":                42,
+					"title":             "10 Tricks",
+					"original_title":    "Dieci trucchi",
+					"original_language": "it",
+					"release_date":      "2022-01-01",
+				}},
+			})
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	results, err := newTMDBTestProvider(server.URL).Search(context.Background(), metadata.SearchQuery{
+		Title:       "Ten Tricks",
+		Year:        2022,
+		ContentType: "movie",
+		Language:    "en",
+	})
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	got := results[0]
+	if got.Name != "10 Tricks" || got.OriginalTitle != "Dieci trucchi" {
+		t.Fatalf("titles = (%q, %q)", got.Name, got.OriginalTitle)
+	}
+	if got.TitleLanguage != "en" || got.TitleIsFallback || got.OriginalLanguage != "it" {
+		t.Fatalf("language metadata = (%q, %v, %q)", got.TitleLanguage, got.TitleIsFallback, got.OriginalLanguage)
+	}
+	if len(got.TitleAliases) != 1 || got.TitleAliases[0].Title != "Dieci trucchi" || got.TitleAliases[0].Kind != "original" {
+		t.Fatalf("aliases = %#v, want original title", got.TitleAliases)
+	}
+}
+
+func TestGetMetadataReturnsAlternativeTitlesAndMarksNativeFallback(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/configuration":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"images": map[string]any{"secure_base_url": serverURL(t, r) + "/images/"},
+			})
+		case "/tv/77":
+			if got := r.URL.Query().Get("language"); got != "en-US" {
+				t.Fatalf("language = %q, want en-US", got)
+			}
+			if appended := r.URL.Query().Get("append_to_response"); !strings.Contains(appended, "alternative_titles") {
+				t.Fatalf("append_to_response = %q, want alternative_titles", appended)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": 77, "name": "倒凶十将伝", "original_name": "倒凶十将伝", "original_language": "ja",
+				"first_air_date": "1999-01-01", "genres": []any{}, "networks": []any{}, "seasons": []any{},
+				"credits": map[string]any{"cast": []any{}, "crew": []any{}}, "external_ids": map[string]any{},
+				"images": map[string]any{}, "content_ratings": map[string]any{"results": []any{}},
+				"alternative_titles": map[string]any{"results": []map[string]any{{"title": "10 Tokyo Warriors"}}},
+			})
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	result, err := newTMDBTestProvider(server.URL).GetMetadata(context.Background(), metadata.MetadataRequest{
+		ProviderIDs: map[string]string{"tmdb": "77"}, ContentType: "series", Language: "en",
+	})
+	if err != nil {
+		t.Fatalf("GetMetadata() error = %v", err)
+	}
+	if result == nil || !result.TitleIsFallback || result.TitleLanguage != "ja" {
+		t.Fatalf("fallback title metadata = %#v", result)
+	}
+	found := false
+	for _, alias := range result.TitleAliases {
+		found = found || alias.Title == "10 Tokyo Warriors" && alias.Kind == "alternate" && alias.Language == ""
+	}
+	if !found {
+		t.Fatalf("aliases = %#v, want unknown-language alternative title", result.TitleAliases)
 	}
 }
 
