@@ -32,34 +32,36 @@ type paginatedResponse[T any] struct {
 
 // MovieResult is a single movie from a TMDB search.
 type MovieResult struct {
-	ID            int     `json:"id"`
-	Title         string  `json:"title"`
-	OriginalTitle string  `json:"original_title"`
-	ReleaseDate   string  `json:"release_date"`
-	Overview      string  `json:"overview"`
-	Popularity    float64 `json:"popularity"`
-	VoteAverage   float64 `json:"vote_average"`
-	VoteCount     int     `json:"vote_count"`
-	Adult         bool    `json:"adult"`
-	PosterPath    string  `json:"poster_path"`
-	BackdropPath  string  `json:"backdrop_path"`
-	GenreIDs      []int   `json:"genre_ids"`
+	ID               int     `json:"id"`
+	Title            string  `json:"title"`
+	OriginalTitle    string  `json:"original_title"`
+	OriginalLanguage string  `json:"original_language"`
+	ReleaseDate      string  `json:"release_date"`
+	Overview         string  `json:"overview"`
+	Popularity       float64 `json:"popularity"`
+	VoteAverage      float64 `json:"vote_average"`
+	VoteCount        int     `json:"vote_count"`
+	Adult            bool    `json:"adult"`
+	PosterPath       string  `json:"poster_path"`
+	BackdropPath     string  `json:"backdrop_path"`
+	GenreIDs         []int   `json:"genre_ids"`
 }
 
 // TVResult is a single TV show from a TMDB search.
 type TVResult struct {
-	ID            int      `json:"id"`
-	Name          string   `json:"name"`
-	OriginalName  string   `json:"original_name"`
-	FirstAirDate  string   `json:"first_air_date"`
-	Overview      string   `json:"overview"`
-	Popularity    float64  `json:"popularity"`
-	VoteAverage   float64  `json:"vote_average"`
-	VoteCount     int      `json:"vote_count"`
-	PosterPath    string   `json:"poster_path"`
-	BackdropPath  string   `json:"backdrop_path"`
-	GenreIDs      []int    `json:"genre_ids"`
-	OriginCountry []string `json:"origin_country"`
+	ID               int      `json:"id"`
+	Name             string   `json:"name"`
+	OriginalName     string   `json:"original_name"`
+	OriginalLanguage string   `json:"original_language"`
+	FirstAirDate     string   `json:"first_air_date"`
+	Overview         string   `json:"overview"`
+	Popularity       float64  `json:"popularity"`
+	VoteAverage      float64  `json:"vote_average"`
+	VoteCount        int      `json:"vote_count"`
+	PosterPath       string   `json:"poster_path"`
+	BackdropPath     string   `json:"backdrop_path"`
+	GenreIDs         []int    `json:"genre_ids"`
+	OriginCountry    []string `json:"origin_country"`
 }
 
 // TrendingResult is a single item from the TMDB trending endpoint.
@@ -84,33 +86,34 @@ type CollectionResult struct {
 
 // MovieDetail is the full movie record from /movie/{id}.
 type MovieDetail struct {
-	ID                  int                  `json:"id"`
-	Title               string               `json:"title"`
-	OriginalTitle       string               `json:"original_title"`
-	Overview            string               `json:"overview"`
-	Tagline             string               `json:"tagline"`
-	ReleaseDate         string               `json:"release_date"`
-	Runtime             int                  `json:"runtime"`
-	Status              string               `json:"status"`
-	Popularity          float64              `json:"popularity"`
-	VoteAverage         float64              `json:"vote_average"`
-	VoteCount           int                  `json:"vote_count"`
-	Adult               bool                 `json:"adult"`
-	IMDbID              string               `json:"imdb_id"`
-	OriginalLanguage    string               `json:"original_language"`
-	PosterPath          string               `json:"poster_path"`
-	BackdropPath        string               `json:"backdrop_path"`
-	Genres              []Genre              `json:"genres"`
-	ProductionCompanies []Company            `json:"production_companies"`
-	ProductionCountries []Country            `json:"production_countries"`
-	SpokenLanguages     []Language           `json:"spoken_languages"`
-	OriginCountry       []string             `json:"origin_country"`
-	BelongsToCollection *Collection          `json:"belongs_to_collection"`
-	Credits             *Credits             `json:"credits"`
-	ExternalIDs         *ExternalIDs         `json:"external_ids"`
-	Images              *ImageSet            `json:"images"`
-	Keywords            *MovieKeywords       `json:"keywords"`
-	ReleaseDates        *ReleaseDatesWrapper `json:"release_dates"`
+	ID                  int                     `json:"id"`
+	Title               string                  `json:"title"`
+	OriginalTitle       string                  `json:"original_title"`
+	Overview            string                  `json:"overview"`
+	Tagline             string                  `json:"tagline"`
+	ReleaseDate         string                  `json:"release_date"`
+	Runtime             int                     `json:"runtime"`
+	Status              string                  `json:"status"`
+	Popularity          float64                 `json:"popularity"`
+	VoteAverage         float64                 `json:"vote_average"`
+	VoteCount           int                     `json:"vote_count"`
+	Adult               bool                    `json:"adult"`
+	IMDbID              string                  `json:"imdb_id"`
+	OriginalLanguage    string                  `json:"original_language"`
+	PosterPath          string                  `json:"poster_path"`
+	BackdropPath        string                  `json:"backdrop_path"`
+	Genres              []Genre                 `json:"genres"`
+	ProductionCompanies []Company               `json:"production_companies"`
+	ProductionCountries []Country               `json:"production_countries"`
+	SpokenLanguages     []Language              `json:"spoken_languages"`
+	OriginCountry       []string                `json:"origin_country"`
+	BelongsToCollection *Collection             `json:"belongs_to_collection"`
+	Credits             *Credits                `json:"credits"`
+	ExternalIDs         *ExternalIDs            `json:"external_ids"`
+	Images              *ImageSet               `json:"images"`
+	Keywords            *MovieKeywords          `json:"keywords"`
+	ReleaseDates        *ReleaseDatesWrapper    `json:"release_dates"`
+	AlternativeTitles   *MovieAlternativeTitles `json:"alternative_titles"`
 }
 
 // ---------------------------------------------------------------------------
@@ -149,6 +152,20 @@ type TVDetail struct {
 	Images              *ImageSet              `json:"images"`
 	Keywords            *TVKeywords            `json:"keywords"`
 	ContentRatings      *ContentRatingsWrapper `json:"content_ratings"`
+	AlternativeTitles   *TVAlternativeTitles   `json:"alternative_titles"`
+}
+
+type AlternativeTitle struct {
+	Title string `json:"title"`
+	Name  string `json:"name"`
+}
+
+type MovieAlternativeTitles struct {
+	Titles []AlternativeTitle `json:"titles"`
+}
+
+type TVAlternativeTitles struct {
+	Results []AlternativeTitle `json:"results"`
 }
 
 // ---------------------------------------------------------------------------

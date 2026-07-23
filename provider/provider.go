@@ -48,6 +48,78 @@ func tmdbLanguage(lang string) string {
 	return lang
 }
 
+func baseLanguage(lang string) string {
+	lang = normalizeTMDBLanguageTag(lang)
+	if before, _, ok := strings.Cut(lang, "-"); ok {
+		return before
+	}
+	return strings.ToLower(lang)
+}
+
+func titleFallback(requested, originalLanguage, title, originalTitle string) bool {
+	return baseLanguage(requested) != "" &&
+		baseLanguage(requested) != baseLanguage(originalLanguage) &&
+		strings.EqualFold(strings.TrimSpace(title), strings.TrimSpace(originalTitle))
+}
+
+func titleLanguage(requested, originalLanguage, title, originalTitle string) string {
+	if titleFallback(requested, originalLanguage, title, originalTitle) {
+		return baseLanguage(originalLanguage)
+	}
+	return baseLanguage(requested)
+}
+
+func titleAliases(localized, original, originalLanguage string) []metadata.TitleAlias {
+	if strings.TrimSpace(original) == "" || strings.EqualFold(strings.TrimSpace(localized), strings.TrimSpace(original)) {
+		return nil
+	}
+	return []metadata.TitleAlias{{
+		Title: original, Language: baseLanguage(originalLanguage), Kind: "original",
+	}}
+}
+
+func detailTitleAliases(localized, original, originalLanguage string, alternatives *MovieAlternativeTitles) []metadata.TitleAlias {
+	aliases := titleAliases(localized, original, originalLanguage)
+	if alternatives != nil {
+		for _, alternative := range alternatives.Titles {
+			aliases = appendAlias(aliases, alternative.Title, "", "alternate", localized, original)
+		}
+	}
+	return aliases
+}
+
+func detailTVTitleAliases(localized, original, originalLanguage string, alternatives *TVAlternativeTitles) []metadata.TitleAlias {
+	aliases := titleAliases(localized, original, originalLanguage)
+	if alternatives != nil {
+		for _, alternative := range alternatives.Results {
+			title := alternative.Title
+			if title == "" {
+				title = alternative.Name
+			}
+			aliases = appendAlias(aliases, title, "", "alternate", localized, original)
+		}
+	}
+	return aliases
+}
+
+func appendAlias(aliases []metadata.TitleAlias, title, language, kind string, excluded ...string) []metadata.TitleAlias {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return aliases
+	}
+	for _, value := range excluded {
+		if strings.EqualFold(title, strings.TrimSpace(value)) {
+			return aliases
+		}
+	}
+	for _, alias := range aliases {
+		if strings.EqualFold(title, strings.TrimSpace(alias.Title)) {
+			return aliases
+		}
+	}
+	return append(aliases, metadata.TitleAlias{Title: title, Language: language, Kind: kind})
+}
+
 const maxCast = 20
 
 // Provider implements SearchProvider, MetadataProvider, ImageProvider,
@@ -85,7 +157,7 @@ func (p *Provider) Search(ctx context.Context, query metadata.SearchQuery) ([]me
 		if err != nil {
 			return nil, fmt.Errorf("tmdb: invalid TMDB ID %q: %w", tmdbID, err)
 		}
-		return p.searchByTmdbID(ctx, id, query.ContentType)
+		return p.searchByTmdbID(ctx, id, query.ContentType, tmdbLanguage(query.Language))
 	}
 
 	// Try IMDb ID.
@@ -94,7 +166,7 @@ func (p *Provider) Search(ctx context.Context, query metadata.SearchQuery) ([]me
 		if err != nil || id == 0 {
 			return nil, err
 		}
-		return p.searchByTmdbID(ctx, id, query.ContentType)
+		return p.searchByTmdbID(ctx, id, query.ContentType, tmdbLanguage(query.Language))
 	}
 
 	// Try TVDB ID.
@@ -103,7 +175,7 @@ func (p *Provider) Search(ctx context.Context, query metadata.SearchQuery) ([]me
 		if err != nil || id == 0 {
 			return nil, err
 		}
-		return p.searchByTmdbID(ctx, id, query.ContentType)
+		return p.searchByTmdbID(ctx, id, query.ContentType, tmdbLanguage(query.Language))
 	}
 
 	// Title search.
@@ -114,10 +186,10 @@ func (p *Provider) Search(ctx context.Context, query metadata.SearchQuery) ([]me
 	return nil, nil
 }
 
-func (p *Provider) searchByTmdbID(ctx context.Context, id int, contentType string) ([]metadata.SearchResult, error) {
+func (p *Provider) searchByTmdbID(ctx context.Context, id int, contentType, language string) ([]metadata.SearchResult, error) {
 	switch contentType {
 	case "movie":
-		movie, err := p.client.GetMovie(ctx, id, defaultTMDBLanguage)
+		movie, err := p.client.GetMovie(ctx, id, language)
 		if err != nil {
 			return nil, err
 		}
@@ -131,15 +203,20 @@ func (p *Provider) searchByTmdbID(ctx context.Context, id int, contentType strin
 			}
 		}
 		return []metadata.SearchResult{{
-			Name:        movie.Title,
-			Year:        extractYear(movie.ReleaseDate),
-			ProviderIDs: ids,
-			ImageURL:    movie.PosterPath,
-			Overview:    movie.Overview,
-			Provider:    p.Slug(),
+			Name:             movie.Title,
+			OriginalTitle:    movie.OriginalTitle,
+			TitleAliases:     titleAliases(movie.Title, movie.OriginalTitle, movie.OriginalLanguage),
+			TitleLanguage:    titleLanguage(language, movie.OriginalLanguage, movie.Title, movie.OriginalTitle),
+			TitleIsFallback:  titleFallback(language, movie.OriginalLanguage, movie.Title, movie.OriginalTitle),
+			OriginalLanguage: metadata.NormalizeOriginalLanguage(movie.OriginalLanguage),
+			Year:             extractYear(movie.ReleaseDate),
+			ProviderIDs:      ids,
+			ImageURL:         movie.PosterPath,
+			Overview:         movie.Overview,
+			Provider:         p.Slug(),
 		}}, nil
 	case "series":
-		tv, err := p.client.GetTV(ctx, id, defaultTMDBLanguage)
+		tv, err := p.client.GetTV(ctx, id, language)
 		if err != nil {
 			return nil, err
 		}
@@ -153,12 +230,17 @@ func (p *Provider) searchByTmdbID(ctx context.Context, id int, contentType strin
 			}
 		}
 		return []metadata.SearchResult{{
-			Name:        tv.Name,
-			Year:        extractYear(tv.FirstAirDate),
-			ProviderIDs: ids,
-			ImageURL:    tv.PosterPath,
-			Overview:    tv.Overview,
-			Provider:    p.Slug(),
+			Name:             tv.Name,
+			OriginalTitle:    tv.OriginalName,
+			TitleAliases:     titleAliases(tv.Name, tv.OriginalName, tv.OriginalLanguage),
+			TitleLanguage:    titleLanguage(language, tv.OriginalLanguage, tv.Name, tv.OriginalName),
+			TitleIsFallback:  titleFallback(language, tv.OriginalLanguage, tv.Name, tv.OriginalName),
+			OriginalLanguage: metadata.NormalizeOriginalLanguage(tv.OriginalLanguage),
+			Year:             extractYear(tv.FirstAirDate),
+			ProviderIDs:      ids,
+			ImageURL:         tv.PosterPath,
+			Overview:         tv.Overview,
+			Provider:         p.Slug(),
 		}}, nil
 	}
 	return nil, nil
@@ -167,36 +249,48 @@ func (p *Provider) searchByTmdbID(ctx context.Context, id int, contentType strin
 func (p *Provider) searchByTitle(ctx context.Context, query metadata.SearchQuery) ([]metadata.SearchResult, error) {
 	switch query.ContentType {
 	case "movie":
-		results, err := p.client.SearchMovie(ctx, query.Title, query.Year)
+		language := tmdbLanguage(query.Language)
+		results, err := p.client.SearchMovie(ctx, query.Title, query.Year, language)
 		if err != nil {
 			return nil, err
 		}
 		var out []metadata.SearchResult
 		for _, r := range results {
 			out = append(out, metadata.SearchResult{
-				Name:        r.Title,
-				Year:        extractYear(r.ReleaseDate),
-				ProviderIDs: map[string]string{"tmdb": strconv.Itoa(r.ID)},
-				ImageURL:    r.PosterPath,
-				Overview:    r.Overview,
-				Provider:    p.Slug(),
+				Name:             r.Title,
+				OriginalTitle:    r.OriginalTitle,
+				TitleAliases:     titleAliases(r.Title, r.OriginalTitle, r.OriginalLanguage),
+				TitleLanguage:    titleLanguage(language, r.OriginalLanguage, r.Title, r.OriginalTitle),
+				TitleIsFallback:  titleFallback(language, r.OriginalLanguage, r.Title, r.OriginalTitle),
+				OriginalLanguage: metadata.NormalizeOriginalLanguage(r.OriginalLanguage),
+				Year:             extractYear(r.ReleaseDate),
+				ProviderIDs:      map[string]string{"tmdb": strconv.Itoa(r.ID)},
+				ImageURL:         r.PosterPath,
+				Overview:         r.Overview,
+				Provider:         p.Slug(),
 			})
 		}
 		return out, nil
 	case "series":
-		results, err := p.client.SearchTV(ctx, query.Title, query.Year)
+		language := tmdbLanguage(query.Language)
+		results, err := p.client.SearchTV(ctx, query.Title, query.Year, language)
 		if err != nil {
 			return nil, err
 		}
 		var out []metadata.SearchResult
 		for _, r := range results {
 			out = append(out, metadata.SearchResult{
-				Name:        r.Name,
-				Year:        extractYear(r.FirstAirDate),
-				ProviderIDs: map[string]string{"tmdb": strconv.Itoa(r.ID)},
-				ImageURL:    r.PosterPath,
-				Overview:    r.Overview,
-				Provider:    p.Slug(),
+				Name:             r.Name,
+				OriginalTitle:    r.OriginalName,
+				TitleAliases:     titleAliases(r.Name, r.OriginalName, r.OriginalLanguage),
+				TitleLanguage:    titleLanguage(language, r.OriginalLanguage, r.Name, r.OriginalName),
+				TitleIsFallback:  titleFallback(language, r.OriginalLanguage, r.Name, r.OriginalName),
+				OriginalLanguage: metadata.NormalizeOriginalLanguage(r.OriginalLanguage),
+				Year:             extractYear(r.FirstAirDate),
+				ProviderIDs:      map[string]string{"tmdb": strconv.Itoa(r.ID)},
+				ImageURL:         r.PosterPath,
+				Overview:         r.Overview,
+				Provider:         p.Slug(),
 			})
 		}
 		return out, nil
@@ -306,17 +400,21 @@ func (p *Provider) getMovieMetadata(ctx context.Context, id int, lang string) (*
 	}
 
 	result := &metadata.MetadataResult{
-		HasMetadata:      true,
-		Title:            movie.Title,
-		OriginalTitle:    movie.OriginalTitle,
-		OriginalLanguage: metadata.NormalizeOriginalLanguage(movie.OriginalLanguage),
-		Overview:         movie.Overview,
-		Tagline:          movie.Tagline,
-		Runtime:          movie.Runtime,
-		Year:             extractYear(movie.ReleaseDate),
-		ReleaseDate:      movie.ReleaseDate,
-		ContentRating:    movieContentRating(movie.ReleaseDates),
-		ProviderIDs:      map[string]string{"tmdb": strconv.Itoa(movie.ID)},
+		HasMetadata:          true,
+		Title:                movie.Title,
+		OriginalTitle:        movie.OriginalTitle,
+		OriginalLanguage:     metadata.NormalizeOriginalLanguage(movie.OriginalLanguage),
+		TitleAliases:         detailTitleAliases(movie.Title, movie.OriginalTitle, movie.OriginalLanguage, movie.AlternativeTitles),
+		TitleAliasesComplete: true,
+		TitleLanguage:        titleLanguage(lang, movie.OriginalLanguage, movie.Title, movie.OriginalTitle),
+		TitleIsFallback:      titleFallback(lang, movie.OriginalLanguage, movie.Title, movie.OriginalTitle),
+		Overview:             movie.Overview,
+		Tagline:              movie.Tagline,
+		Runtime:              movie.Runtime,
+		Year:                 extractYear(movie.ReleaseDate),
+		ReleaseDate:          movie.ReleaseDate,
+		ContentRating:        movieContentRating(movie.ReleaseDates),
+		ProviderIDs:          map[string]string{"tmdb": strconv.Itoa(movie.ID)},
 	}
 
 	if movie.ExternalIDs != nil {
@@ -363,19 +461,23 @@ func (p *Provider) getTVMetadata(ctx context.Context, id int, lang string) (*met
 	}
 
 	result := &metadata.MetadataResult{
-		HasMetadata:      true,
-		Title:            tv.Name,
-		OriginalTitle:    tv.OriginalName,
-		OriginalLanguage: metadata.NormalizeOriginalLanguage(tv.OriginalLanguage),
-		Overview:         tv.Overview,
-		Tagline:          tv.Tagline,
-		Year:             extractYear(tv.FirstAirDate),
-		ContentRating:    tvContentRating(tv.ContentRatings),
-		SeasonCount:      tv.NumberOfSeasons,
-		FirstAirDate:     tv.FirstAirDate,
-		LastAirDate:      tv.LastAirDate,
-		ShowStatus:       tv.Status,
-		ProviderIDs:      map[string]string{"tmdb": strconv.Itoa(tv.ID)},
+		HasMetadata:          true,
+		Title:                tv.Name,
+		OriginalTitle:        tv.OriginalName,
+		OriginalLanguage:     metadata.NormalizeOriginalLanguage(tv.OriginalLanguage),
+		TitleAliases:         detailTVTitleAliases(tv.Name, tv.OriginalName, tv.OriginalLanguage, tv.AlternativeTitles),
+		TitleAliasesComplete: true,
+		TitleLanguage:        titleLanguage(lang, tv.OriginalLanguage, tv.Name, tv.OriginalName),
+		TitleIsFallback:      titleFallback(lang, tv.OriginalLanguage, tv.Name, tv.OriginalName),
+		Overview:             tv.Overview,
+		Tagline:              tv.Tagline,
+		Year:                 extractYear(tv.FirstAirDate),
+		ContentRating:        tvContentRating(tv.ContentRatings),
+		SeasonCount:          tv.NumberOfSeasons,
+		FirstAirDate:         tv.FirstAirDate,
+		LastAirDate:          tv.LastAirDate,
+		ShowStatus:           tv.Status,
+		ProviderIDs:          map[string]string{"tmdb": strconv.Itoa(tv.ID)},
 	}
 
 	if tv.ExternalIDs != nil {
