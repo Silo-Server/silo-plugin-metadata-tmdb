@@ -18,7 +18,7 @@ func TestSearchIncludesExplicitAdultFlag(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				want := map[bool]string{false: "false", true: "true"}[includeAdult]
 				if got := r.URL.Query().Get("include_adult"); got != want {
-					t.Fatalf("include_adult = %q, want %q", got, want)
+					t.Errorf("include_adult = %q, want %q", got, want)
 				}
 				_ = json.NewEncoder(w).Encode(map[string]any{"results": []any{}})
 			}))
