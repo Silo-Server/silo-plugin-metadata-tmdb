@@ -580,6 +580,9 @@ func TestGetImagesReturnsExactSeasonGallery(t *testing.T) {
 	if images[0].URL != "/specials-fr.jpg" || images[1].URL != "/specials-en.jpg" {
 		t.Fatalf("images = %#v, want exact Specials gallery", images)
 	}
+	if images[0].Rating != 8.0 || images[1].Rating != 7.0 {
+		t.Fatalf("ratings = %v, %v; want 8.0, 7.0", images[0].Rating, images[1].Rating)
+	}
 }
 
 func TestGetImagesPrefersTMDBPrimaryPoster(t *testing.T) {
