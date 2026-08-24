@@ -263,6 +263,25 @@ func tmdbVariantSize(variant, role string) string {
 			return "w185"
 		}
 		return "w500"
+	case "large":
+		// Sits between "featured" and "full": ~780px posters/stills and
+		// ~1280px backdrops/logos, mapped to the nearest real TMDB size.
+		switch role {
+		case "backdrop":
+			return "w1280"
+		case "profile":
+			// h632 is the largest non-original profile size TMDB serves.
+			return "h632"
+		case "logo":
+			// w500 is the largest non-original logo size TMDB serves.
+			return "w500"
+		case "still":
+			// TMDB tops stills out at w300 below original, so anything at or
+			// above the "large" target has to come from original.
+			return "original"
+		default: // poster and anything else poster-shaped
+			return "w780"
+		}
 	case "full":
 		if role == "poster" {
 			return "w780"
