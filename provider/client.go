@@ -421,6 +421,19 @@ func (c *Client) GetTV(ctx context.Context, id int, lang string) (*TVDetail, err
 	return &tv, nil
 }
 
+// GetTVSeasonImages fetches every image attached to one exact TV season.
+// include_image_language carries the requested language, English fallback,
+// and language-neutral artwork in a single provider request.
+func (c *Client) GetTVSeasonImages(ctx context.Context, tvID, seasonNumber int, lang string) (*ImageSet, error) {
+	path := fmt.Sprintf("/tv/%d/season/%d/images?language=%s&include_image_language=%s",
+		tvID, seasonNumber, url.QueryEscape(lang), url.QueryEscape(tmdbImageLanguages(lang)))
+	var images ImageSet
+	if err := c.doGet(ctx, path, &images); err != nil {
+		return nil, err
+	}
+	return &images, nil
+}
+
 // GetPerson fetches full person details with external IDs appended.
 func (c *Client) GetPerson(ctx context.Context, id int, lang string) (*PersonDetail, error) {
 	path := fmt.Sprintf("/person/%d?append_to_response=external_ids&language=%s", id, url.QueryEscape(lang))

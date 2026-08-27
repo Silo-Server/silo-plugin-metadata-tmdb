@@ -540,6 +540,11 @@ func (p *Provider) GetImages(ctx context.Context, req metadata.ImageRequest) ([]
 	lang := tmdbLanguage(req.Language)
 	var imgs *ImageSet
 	primaryPosterPath := ""
+	seasonGallery := req.ContentType == "series" && req.SeasonNumber != nil
+	var scopedSeasonNumber *int
+	if seasonGallery {
+		scopedSeasonNumber = req.SeasonNumber
+	}
 	switch req.ContentType {
 	case "movie":
 		movie, err := p.client.GetMovie(ctx, id, lang)
@@ -549,12 +554,24 @@ func (p *Provider) GetImages(ctx context.Context, req metadata.ImageRequest) ([]
 		imgs = movie.Images
 		primaryPosterPath = movie.PosterPath
 	case "series":
-		tv, err := p.client.GetTV(ctx, id, lang)
-		if err != nil {
-			return nil, err
+		if seasonGallery {
+			imgs, err = p.client.GetTVSeasonImages(ctx, id, *req.SeasonNumber, lang)
+			if err != nil {
+				return nil, err
+			}
+			// The primary-poster boost is best-effort: a failed season lookup
+			// still returns the gallery, just unboosted.
+			if season, err := p.client.GetSeason(ctx, id, *req.SeasonNumber, lang); err == nil {
+				primaryPosterPath = season.PosterPath
+			}
+		} else {
+			tv, err := p.client.GetTV(ctx, id, lang)
+			if err != nil {
+				return nil, err
+			}
+			imgs = tv.Images
+			primaryPosterPath = tv.PosterPath
 		}
-		imgs = tv.Images
-		primaryPosterPath = tv.PosterPath
 	}
 
 	var out []metadata.RemoteImage
@@ -567,30 +584,33 @@ func (p *Provider) GetImages(ctx context.Context, req metadata.ImageRequest) ([]
 				Width:        img.Width,
 				Height:       img.Height,
 				Rating:       img.VoteAverage,
+				SeasonNumber: scopedSeasonNumber,
 				IncludesText: tmdbImageIncludesText(img.ISO639_1),
 			})
 		}
-		for _, img := range imgs.Backdrops {
-			out = append(out, metadata.RemoteImage{
-				URL:          img.FilePath,
-				Type:         metadata.ImageBackdrop,
-				Language:     img.ISO639_1,
-				Width:        img.Width,
-				Height:       img.Height,
-				Rating:       img.VoteAverage,
-				IncludesText: tmdbImageIncludesText(img.ISO639_1),
-			})
-		}
-		for _, img := range imgs.Logos {
-			out = append(out, metadata.RemoteImage{
-				URL:          img.FilePath,
-				Type:         metadata.ImageLogo,
-				Language:     img.ISO639_1,
-				Width:        img.Width,
-				Height:       img.Height,
-				Rating:       img.VoteAverage,
-				IncludesText: tmdbImageIncludesText(img.ISO639_1),
-			})
+		if !seasonGallery {
+			for _, img := range imgs.Backdrops {
+				out = append(out, metadata.RemoteImage{
+					URL:          img.FilePath,
+					Type:         metadata.ImageBackdrop,
+					Language:     img.ISO639_1,
+					Width:        img.Width,
+					Height:       img.Height,
+					Rating:       img.VoteAverage,
+					IncludesText: tmdbImageIncludesText(img.ISO639_1),
+				})
+			}
+			for _, img := range imgs.Logos {
+				out = append(out, metadata.RemoteImage{
+					URL:          img.FilePath,
+					Type:         metadata.ImageLogo,
+					Language:     img.ISO639_1,
+					Width:        img.Width,
+					Height:       img.Height,
+					Rating:       img.VoteAverage,
+					IncludesText: tmdbImageIncludesText(img.ISO639_1),
+				})
+			}
 		}
 	}
 
@@ -693,6 +713,19 @@ func imageLanguage(lang string) string {
 		norm = norm[:idx]
 	}
 	return norm
+}
+
+func tmdbImageLanguages(lang string) string {
+	requested := strings.TrimSpace(lang)
+	languages := make([]string, 0, 3)
+	if requested != "" {
+		languages = append(languages, requested)
+	}
+	if baseLanguage(requested) != "en" {
+		languages = append(languages, "en")
+	}
+	languages = append(languages, "null")
+	return strings.Join(languages, ",")
 }
 
 func preferPrimaryImage(
