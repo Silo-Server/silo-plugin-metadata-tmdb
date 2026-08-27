@@ -234,6 +234,9 @@ func (s *metadataServer) GetImages(ctx context.Context, req *pluginv1.GetImagesR
 }
 
 func imageRecordMetadata(img metadata.RemoteImage) *structpb.Struct {
+	if img.Rating <= 0 && img.IncludesText == nil {
+		return nil
+	}
 	fields := make(map[string]any, 2)
 	if img.Rating > 0 {
 		fields["rating"] = img.Rating
@@ -241,11 +244,7 @@ func imageRecordMetadata(img metadata.RemoteImage) *structpb.Struct {
 	if img.IncludesText != nil {
 		fields["includes_text"] = *img.IncludesText
 	}
-	if len(fields) == 0 {
-		return nil
-	}
-	result, _ := structpb.NewStruct(fields)
-	return result
+	return structFromMap(fields)
 }
 
 // tmdbCanonicalPath wraps a raw TMDB file path with the tmdb:// scheme and role
