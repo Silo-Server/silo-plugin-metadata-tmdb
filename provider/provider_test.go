@@ -508,19 +508,89 @@ func TestGetImagesReturnsRawPaths(t *testing.T) {
 		t.Fatalf("len(images) = %d, want 3", len(images))
 	}
 
-	got := map[metadata.ImageType]string{}
+	got := map[metadata.ImageType]metadata.RemoteImage{}
 	for _, img := range images {
-		got[img.Type] = img.URL
+		got[img.Type] = img
 	}
 
-	if got[metadata.ImagePoster] != "/poster.jpg" {
-		t.Fatalf("poster URL = %q", got[metadata.ImagePoster])
+	if got[metadata.ImagePoster].URL != "/poster.jpg" {
+		t.Fatalf("poster URL = %q", got[metadata.ImagePoster].URL)
 	}
-	if got[metadata.ImageBackdrop] != "/backdrop.jpg" {
-		t.Fatalf("backdrop URL = %q", got[metadata.ImageBackdrop])
+	if got[metadata.ImagePoster].IncludesText == nil || *got[metadata.ImagePoster].IncludesText {
+		t.Fatalf("poster IncludesText = %v, want false for language-neutral art", got[metadata.ImagePoster].IncludesText)
 	}
-	if got[metadata.ImageLogo] != "/logo.png" {
-		t.Fatalf("logo URL = %q", got[metadata.ImageLogo])
+	if got[metadata.ImageBackdrop].URL != "/backdrop.jpg" {
+		t.Fatalf("backdrop URL = %q", got[metadata.ImageBackdrop].URL)
+	}
+	if got[metadata.ImageBackdrop].IncludesText == nil || *got[metadata.ImageBackdrop].IncludesText {
+		t.Fatalf("backdrop IncludesText = %v, want false for language-neutral art", got[metadata.ImageBackdrop].IncludesText)
+	}
+	if got[metadata.ImageLogo].URL != "/logo.png" {
+		t.Fatalf("logo URL = %q", got[metadata.ImageLogo].URL)
+	}
+	if got[metadata.ImageLogo].IncludesText == nil || *got[metadata.ImageLogo].IncludesText {
+		t.Fatalf("logo IncludesText = %v, want false for language-neutral art", got[metadata.ImageLogo].IncludesText)
+	}
+}
+
+func TestGetImagesTreatsNoLanguageCodeAsTextless(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch r.URL.Path {
+		case "/configuration":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"images": map[string]any{
+					"secure_base_url": serverURL(t, r) + "/images/",
+				},
+			})
+		case "/movie/42":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": 42,
+				"images": map[string]any{
+					"posters": []map[string]any{
+						{"file_path": "/poster-xx.jpg", "iso_639_1": "xx", "vote_average": 8.0},
+					},
+					"backdrops": []map[string]any{
+						{"file_path": "/backdrop-en.jpg", "iso_639_1": "en", "vote_average": 7.0},
+					},
+					"logos": []map[string]any{
+						{"file_path": "/logo-en.png", "iso_639_1": "en", "vote_average": 6.0},
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	images, err := newTMDBTestProvider(server.URL).GetImages(context.Background(), metadata.ImageRequest{
+		ProviderIDs: map[string]string{"tmdb": "42"},
+		ContentType: "movie",
+	})
+	if err != nil {
+		t.Fatalf("GetImages() error = %v", err)
+	}
+
+	got := map[metadata.ImageType]metadata.RemoteImage{}
+	for _, img := range images {
+		got[img.Type] = img
+	}
+
+	poster := got[metadata.ImagePoster]
+	if poster.IncludesText == nil || *poster.IncludesText {
+		t.Fatalf("poster IncludesText = %v, want false for TMDB \"xx\" (No Language)", poster.IncludesText)
+	}
+	backdrop := got[metadata.ImageBackdrop]
+	if backdrop.IncludesText == nil || !*backdrop.IncludesText {
+		t.Fatalf("backdrop IncludesText = %v, want true for language-tagged art", backdrop.IncludesText)
+	}
+	logo := got[metadata.ImageLogo]
+	if logo.IncludesText == nil || !*logo.IncludesText {
+		t.Fatalf("logo IncludesText = %v, want true for language-tagged art", logo.IncludesText)
 	}
 }
 
@@ -592,9 +662,66 @@ func TestGetImagesPrefersTMDBPrimaryPoster(t *testing.T) {
 	if textless == nil {
 		t.Fatal("textless poster missing from GetImages() result")
 	}
+	if primary.IncludesText == nil || !*primary.IncludesText {
+		t.Fatalf("primary IncludesText = %v, want true", primary.IncludesText)
+	}
+	if textless.IncludesText == nil || *textless.IncludesText {
+		t.Fatalf("textless IncludesText = %v, want false", textless.IncludesText)
+	}
 	if primary.Rating <= textless.Rating {
 		t.Fatalf("primary rating = %v, textless rating = %v; want primary > textless", primary.Rating, textless.Rating)
 	}
+}
+
+func TestGetImagesPrimaryBoostPreservesTextlessSignal(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch r.URL.Path {
+		case "/configuration":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"images": map[string]any{"secure_base_url": serverURL(t, r) + "/images/"},
+			})
+		case "/movie/42":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":          42,
+				"poster_path": "/poster-textless.jpg",
+				"images": map[string]any{
+					"posters": []map[string]any{
+						{"file_path": "/poster-textless.jpg", "iso_639_1": nil, "vote_average": 8.0},
+						{"file_path": "/poster-english.jpg", "iso_639_1": "en", "vote_average": 7.0},
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	images, err := newTMDBTestProvider(server.URL).GetImages(context.Background(), metadata.ImageRequest{
+		ProviderIDs: map[string]string{"tmdb": "42"},
+		ContentType: "movie",
+		Language:    "en",
+	})
+	if err != nil {
+		t.Fatalf("GetImages() error = %v", err)
+	}
+	for i := range images {
+		if images[i].URL != "/poster-textless.jpg" {
+			continue
+		}
+		if images[i].Language != "en" {
+			t.Fatalf("primary language = %q, want boosted request language en", images[i].Language)
+		}
+		if images[i].IncludesText == nil || *images[i].IncludesText {
+			t.Fatalf("primary IncludesText = %v, want false", images[i].IncludesText)
+		}
+		return
+	}
+	t.Fatal("primary textless poster missing")
 }
 
 func TestGetImagesAddsPrimaryPosterWhenImagesMissIt(t *testing.T) {
@@ -660,6 +787,12 @@ func TestGetImagesAddsPrimaryPosterWhenImagesMissIt(t *testing.T) {
 	}
 	if primary.Language != "en" {
 		t.Fatalf("primary language = %q, want en", primary.Language)
+	}
+	if primary.IncludesText == nil || !*primary.IncludesText {
+		t.Fatalf("primary IncludesText = %v, want true for language-selected primary", primary.IncludesText)
+	}
+	if alt.IncludesText == nil || *alt.IncludesText {
+		t.Fatalf("alt IncludesText = %v, want false for language-neutral art", alt.IncludesText)
 	}
 	if primary.Rating <= alt.Rating {
 		t.Fatalf("primary rating = %v, alt rating = %v; want primary > alt", primary.Rating, alt.Rating)
