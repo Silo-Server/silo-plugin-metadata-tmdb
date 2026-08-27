@@ -559,6 +559,11 @@ func (p *Provider) GetImages(ctx context.Context, req metadata.ImageRequest) ([]
 			if err != nil {
 				return nil, err
 			}
+			// The primary-poster boost is best-effort: a failed season lookup
+			// still returns the gallery, just unboosted.
+			if season, err := p.client.GetSeason(ctx, id, *req.SeasonNumber, lang); err == nil {
+				primaryPosterPath = season.PosterPath
+			}
 		} else {
 			tv, err := p.client.GetTV(ctx, id, lang)
 			if err != nil {
@@ -582,31 +587,27 @@ func (p *Provider) GetImages(ctx context.Context, req metadata.ImageRequest) ([]
 				SeasonNumber: scopedSeasonNumber,
 			})
 		}
-		for _, img := range imgs.Backdrops {
-			if seasonGallery {
-				continue
+		if !seasonGallery {
+			for _, img := range imgs.Backdrops {
+				out = append(out, metadata.RemoteImage{
+					URL:      img.FilePath,
+					Type:     metadata.ImageBackdrop,
+					Language: img.ISO639_1,
+					Width:    img.Width,
+					Height:   img.Height,
+					Rating:   img.VoteAverage,
+				})
 			}
-			out = append(out, metadata.RemoteImage{
-				URL:      img.FilePath,
-				Type:     metadata.ImageBackdrop,
-				Language: img.ISO639_1,
-				Width:    img.Width,
-				Height:   img.Height,
-				Rating:   img.VoteAverage,
-			})
-		}
-		for _, img := range imgs.Logos {
-			if seasonGallery {
-				continue
+			for _, img := range imgs.Logos {
+				out = append(out, metadata.RemoteImage{
+					URL:      img.FilePath,
+					Type:     metadata.ImageLogo,
+					Language: img.ISO639_1,
+					Width:    img.Width,
+					Height:   img.Height,
+					Rating:   img.VoteAverage,
+				})
 			}
-			out = append(out, metadata.RemoteImage{
-				URL:      img.FilePath,
-				Type:     metadata.ImageLogo,
-				Language: img.ISO639_1,
-				Width:    img.Width,
-				Height:   img.Height,
-				Rating:   img.VoteAverage,
-			})
 		}
 	}
 
