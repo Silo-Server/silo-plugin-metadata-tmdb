@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -141,7 +142,7 @@ func (c *Client) doGet(ctx context.Context, path string, dest any) error {
 
 	reqURL := c.requestURL(path)
 
-	for attempt := 0; attempt <= maxRetries; attempt++ {
+	for attempt := 0; ; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 		if err != nil {
 			return fmt.Errorf("tmdb: create request: %w", err)
@@ -153,11 +154,21 @@ func (c *Client) doGet(ctx context.Context, path string, dest any) error {
 			return fmt.Errorf("tmdb: request failed: %w", err)
 		}
 
-		// 429 Too Many Requests — respect Retry-After header.
-		if resp.StatusCode == http.StatusTooManyRequests {
+		// 429 and 5xx: retry with backoff. The Silo metadata proxy answers overload
+		// with 503 plus an exact Retry-After, so honour that header for as long as
+		// the caller's context allows rather than giving up after a fixed count.
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+			retryAfter := retryAfterHeader(resp)
 			resp.Body.Close()
-			if attempt < maxRetries {
-				backoff := retryAfterOrDefault(resp, attempt)
+			if attempt < maxRetries || (retryAfter > 0 && c.ProxyMode()) {
+				backoff := retryAfter
+				if backoff <= 0 {
+					backoff = time.Duration(1<<uint(min(attempt, 5))) * time.Second
+				}
+				backoff += time.Duration(rand.Int64N(int64(250 * time.Millisecond)))
+				if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= backoff {
+					return fmt.Errorf("tmdb: HTTP %d and retry would exceed caller deadline", resp.StatusCode)
+				}
 				select {
 				case <-time.After(backoff):
 				case <-ctx.Done():
@@ -165,20 +176,8 @@ func (c *Client) doGet(ctx context.Context, path string, dest any) error {
 				}
 				continue
 			}
-			return fmt.Errorf("tmdb: rate limited after %d retries", maxRetries)
-		}
-
-		// 5xx — retry with exponential backoff.
-		if resp.StatusCode >= 500 {
-			resp.Body.Close()
-			if attempt < maxRetries {
-				backoff := time.Duration(1<<attempt) * time.Second
-				select {
-				case <-time.After(backoff):
-				case <-ctx.Done():
-					return ctx.Err()
-				}
-				continue
+			if resp.StatusCode == http.StatusTooManyRequests {
+				return fmt.Errorf("tmdb: rate limited after %d retries", maxRetries)
 			}
 			return fmt.Errorf("tmdb: server error %d after %d retries", resp.StatusCode, maxRetries)
 		}
@@ -202,18 +201,17 @@ func (c *Client) doGet(ctx context.Context, path string, dest any) error {
 		}
 		return nil
 	}
-	return fmt.Errorf("tmdb: max retries exceeded")
 }
 
-// retryAfterOrDefault parses the Retry-After header (seconds) or falls back
-// to exponential backoff.
-func retryAfterOrDefault(resp *http.Response, attempt int) time.Duration {
+// retryAfterHeader parses a Retry-After header given in seconds. It returns 0
+// when the header is absent or not a positive integer.
+func retryAfterHeader(resp *http.Response) time.Duration {
 	if val := resp.Header.Get("Retry-After"); val != "" {
 		if secs, err := strconv.Atoi(val); err == nil && secs > 0 {
 			return time.Duration(secs) * time.Second
 		}
 	}
-	return time.Duration(1<<attempt) * time.Second
+	return 0
 }
 
 const maxTrendingResults = 100
