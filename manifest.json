@@ -35,7 +35,7 @@
       "type": "metadata_provider.v1",
       "id": "tmdb",
       "display_name": "TMDB",
-      "description": "The Movie Database — metadata for movies and TV series.",
+      "description": "The Movie Database \u2014 metadata for movies and TV series.",
       "metadata": {
         "default_priority": {
           "movie": 2,
@@ -58,5 +58,41 @@
       }
     }
   ],
-  "global_config_schema": []
+  "global_config_schema": [
+    {
+      "key": "metadata_proxy",
+      "title": "Silo Metadata Proxy",
+      "description": "Route TMDB requests through the shared Silo metadata proxy instead of calling TMDB directly. The proxy caches responses for every Silo installation, so scans hit TMDB far less often. Leave the URL blank to call TMDB directly.",
+      "json_schema": "{\"type\":\"object\",\"properties\":{\"enabled\":{\"type\":\"boolean\"},\"url\":{\"type\":\"string\"}},\"additionalProperties\":false}",
+      "required": false,
+      "admin_form": {
+        "submit_label": "Save proxy settings",
+        "fields": [
+          {
+            "key": "enabled",
+            "label": "Use Silo metadata proxy",
+            "description": "When on, this plugin sends TMDB requests to the proxy URL below and never uses an API key.",
+            "control": "ADMIN_FORM_CONTROL_SWITCH",
+            "default_value": false
+          },
+          {
+            "key": "url",
+            "label": "Proxy URL",
+            "description": "Base URL of the metadata proxy. The official proxy is https://metadata.siloserver.org.",
+            "control": "ADMIN_FORM_CONTROL_TEXT",
+            "placeholder": "https://metadata.siloserver.org",
+            "default_value": "https://metadata.siloserver.org",
+            "show_when": [
+              {
+                "field": "enabled",
+                "equals": [
+                  "true"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
 }

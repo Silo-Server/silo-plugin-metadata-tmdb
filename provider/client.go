@@ -22,14 +22,19 @@ const (
 	maxResponseBody = 1 << 20 // 1 MB
 )
 
+// proxyPathPrefix is where the Silo metadata proxy mounts the TMDB v3 surface.
+const proxyPathPrefix = "/v1/tmdb/3"
+
 // Client is an HTTP client for the TMDB v3 API.
 type Client struct {
-	httpClient *http.Client
-	apiKey     string
-	baseURL    string
-	imageBase  string // cached from /configuration
-	limiter    *rate.Limiter
-	configMu   sync.Mutex
+	httpClient  *http.Client
+	apiKey      string
+	baseURL     string
+	proxyMode   bool   // when true, no api_key is sent and baseURL is a Silo metadata proxy
+	imageBase   string // cached from /configuration
+	limiter     *rate.Limiter
+	configMu    sync.Mutex
+	transportMu sync.RWMutex
 }
 
 // NewClient creates a TMDB API client with the given rate limit (requests per
@@ -45,7 +50,54 @@ func NewClient(rateLimit int) *Client {
 
 // SetBaseURL overrides the API base URL. Used for testing.
 func (c *Client) SetBaseURL(url string) {
+	c.transportMu.Lock()
+	defer c.transportMu.Unlock()
 	c.baseURL = url
+	c.proxyMode = false
+}
+
+// SetProxyURL routes every request through a Silo metadata proxy at the given
+// base URL (for example https://metadata.siloserver.org). The proxy holds the
+// project credential, so no api_key is sent. An empty URL restores direct
+// TMDB access with the built-in key. Safe to call while requests are in flight.
+func (c *Client) SetProxyURL(proxyURL string) error {
+	proxyURL = strings.TrimRight(strings.TrimSpace(proxyURL), "/")
+	c.transportMu.Lock()
+	defer c.transportMu.Unlock()
+	if proxyURL == "" {
+		c.baseURL = defaultBaseURL
+		c.proxyMode = false
+		return nil
+	}
+	parsed, err := url.Parse(proxyURL)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("tmdb: invalid metadata proxy URL %q", proxyURL)
+	}
+	c.baseURL = strings.TrimRight(proxyURL, "/") + proxyPathPrefix
+	c.proxyMode = true
+	return nil
+}
+
+// ProxyMode reports whether requests are routed through a Silo metadata proxy.
+func (c *Client) ProxyMode() bool {
+	c.transportMu.RLock()
+	defer c.transportMu.RUnlock()
+	return c.proxyMode
+}
+
+// requestURL builds the upstream URL for a TMDB v3 path. Direct mode appends the
+// api_key query parameter; proxy mode never sends a credential.
+func (c *Client) requestURL(path string) string {
+	c.transportMu.RLock()
+	defer c.transportMu.RUnlock()
+	if c.proxyMode {
+		return c.baseURL + path
+	}
+	sep := "?"
+	if strings.Contains(path, "?") {
+		sep = "&"
+	}
+	return c.baseURL + path + sep + "api_key=" + url.QueryEscape(c.apiKey)
 }
 
 // ImageURL builds a full image URL from a TMDB file_path and size.
@@ -87,12 +139,7 @@ func (c *Client) doGet(ctx context.Context, path string, dest any) error {
 		return err
 	}
 
-	// Append api_key query parameter for TMDB v3 authentication.
-	sep := "?"
-	if strings.Contains(path, "?") {
-		sep = "&"
-	}
-	reqURL := c.baseURL + path + sep + "api_key=" + url.QueryEscape(c.apiKey)
+	reqURL := c.requestURL(path)
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
