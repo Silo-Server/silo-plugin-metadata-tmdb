@@ -15,9 +15,11 @@ permissions:
 
 jobs:
   test:
-    runs-on: ${{ inputs.self_hosted && (github.repository == 'Silo-Server/silo-plugin-metadata-tmdb' && ((github.event_name == 'pull_request' && contains(fromJSON('["MEMBER","OWNER"]'), github.event.pull_request.author_association)) || (github.event_name != 'pull_request' && github.ref == 'refs/heads/main'))) && fromJSON(format('["self-hosted","linux","x64","silo-linux","silo-run-{0}-{1}","silo-job-test"]', github.run_id, github.run_attempt)) || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.self_hosted && (github.repository == 'Silo-Server/silo-plugin-metadata-tmdb' && ((github.event_name == 'pull_request' && contains(fromJSON(vars.SILO_CI_MEMBERS || '[]'), github.event.pull_request.user.login)) || (github.event_name != 'pull_request' && github.ref == 'refs/heads/main'))) && fromJSON(format('["self-hosted","linux","x64","silo-linux","silo-run-{0}-{1}","silo-job-test"]', github.run_id, github.run_attempt)) || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@v6
         with:
@@ -31,7 +33,11 @@ jobs:
 
       - name: Reject committed local SDK replaces
         run: |
-          if grep -Eq '^replace github.com/Silo-Server/silo-plugin-sdk => /' go.mod; then
+          if ! go mod edit -json | jq -e '
+            all(.Replace[]?;
+              .Old.Path != "github.com/Silo-Server/silo-plugin-sdk" or
+              (.New.Version // "") != "" or
+              (.New.Path | startswith("/") | not))' >/dev/null; then
             echo "go.mod contains a machine-local silo-plugin-sdk replace."
             exit 1
           fi
