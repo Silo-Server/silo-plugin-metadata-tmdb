@@ -134,6 +134,14 @@ func NewProvider() *Provider {
 	return &Provider{client: NewClient(40)}
 }
 
+// NewProviderWithAdultSearch creates a provider with explicit-content search
+// enabled or disabled. The default NewProvider remains safe/off.
+func NewProviderWithAdultSearch(includeAdult bool) *Provider {
+	client := NewClient(40)
+	client.SetIncludeAdult(includeAdult)
+	return &Provider{client: client}
+}
+
 // NewProviderWithClient creates a TMDB provider with a pre-configured client.
 func NewProviderWithClient(c *Client) *Provider {
 	return &Provider{client: c}

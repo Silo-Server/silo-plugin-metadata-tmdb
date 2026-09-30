@@ -58,5 +58,24 @@
       }
     }
   ],
-  "global_config_schema": []
+  "global_config_schema": [
+    {
+      "key": "content",
+      "title": "Content filtering",
+      "description": "Control which TMDB titles may appear in search results.",
+      "json_schema": "{\"type\":\"object\",\"properties\":{\"include_adult\":{\"type\":\"boolean\"}},\"additionalProperties\":false}",
+      "required": false,
+      "admin_form": {
+        "submit_label": "Save settings",
+        "fields": [
+          {
+            "key": "include_adult",
+            "label": "Include adult content",
+            "description": "Allow TMDB movie and TV searches to return titles marked as adult. Disabled by default.",
+            "control": "ADMIN_FORM_CONTROL_SWITCH"
+          }
+        ]
+      }
+    }
+  ]
 }

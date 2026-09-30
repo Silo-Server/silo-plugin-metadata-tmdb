@@ -42,7 +42,17 @@ func (s *runtimeServer) GetManifest(context.Context, *pluginv1.GetManifestReques
 	return &pluginv1.GetManifestResponse{Manifest: s.manifest}, nil
 }
 
-func (s *runtimeServer) Configure(_ context.Context, _ *pluginv1.ConfigureRequest) (*pluginv1.ConfigureResponse, error) {
+func (s *runtimeServer) Configure(_ context.Context, req *pluginv1.ConfigureRequest) (*pluginv1.ConfigureResponse, error) {
+	includeAdult := false
+	for _, entry := range req.GetConfig() {
+		if entry == nil || entry.GetKey() != "content" || entry.GetValue() == nil {
+			continue
+		}
+		if value, ok := entry.GetValue().AsMap()["include_adult"].(bool); ok {
+			includeAdult = value
+		}
+	}
+	s.provider = provider.NewProviderWithAdultSearch(includeAdult)
 	return &pluginv1.ConfigureResponse{}, nil
 }
 

@@ -24,12 +24,13 @@ const (
 
 // Client is an HTTP client for the TMDB v3 API.
 type Client struct {
-	httpClient *http.Client
-	apiKey     string
-	baseURL    string
-	imageBase  string // cached from /configuration
-	limiter    *rate.Limiter
-	configMu   sync.Mutex
+	httpClient   *http.Client
+	apiKey       string
+	baseURL      string
+	imageBase    string // cached from /configuration
+	limiter      *rate.Limiter
+	configMu     sync.Mutex
+	includeAdult bool
 }
 
 // NewClient creates a TMDB API client with the given rate limit (requests per
@@ -46,6 +47,12 @@ func NewClient(rateLimit int) *Client {
 // SetBaseURL overrides the API base URL. Used for testing.
 func (c *Client) SetBaseURL(url string) {
 	c.baseURL = url
+}
+
+// SetIncludeAdult controls whether TMDB title searches may return entries
+// marked as adult. It is intentionally disabled by default.
+func (c *Client) SetIncludeAdult(include bool) {
+	c.includeAdult = include
 }
 
 // ImageURL builds a full image URL from a TMDB file_path and size.
@@ -359,6 +366,7 @@ func (c *Client) GetCollectionPreset(ctx context.Context, preset, mediaType, tim
 // SearchMovie searches TMDB for movies matching the query.
 func (c *Client) SearchMovie(ctx context.Context, query string, year int, language string) ([]MovieResult, error) {
 	path := "/search/movie?query=" + url.QueryEscape(query) + "&language=" + url.QueryEscape(language)
+	path += "&include_adult=" + strconv.FormatBool(c.includeAdult)
 	if year > 0 {
 		path += "&year=" + strconv.Itoa(year)
 	}
@@ -372,6 +380,7 @@ func (c *Client) SearchMovie(ctx context.Context, query string, year int, langua
 // SearchTV searches TMDB for TV shows matching the query.
 func (c *Client) SearchTV(ctx context.Context, query string, year int, language string) ([]TVResult, error) {
 	path := "/search/tv?query=" + url.QueryEscape(query) + "&language=" + url.QueryEscape(language)
+	path += "&include_adult=" + strconv.FormatBool(c.includeAdult)
 	if year > 0 {
 		path += "&first_air_date_year=" + strconv.Itoa(year)
 	}
