@@ -7,8 +7,17 @@ metadata and resolves `tmdb://` artwork references.
 ## Setup
 
 TMDB Metadata is installed as a default Silo plugin. Add or enable **TMDB** in a
-movie or television library's metadata provider chain; no plugin-specific
-configuration is required.
+movie or television library's metadata provider chain. No configuration is
+required for direct TMDB access.
+
+### Silo metadata proxy
+
+The plugin's **Configure** tab has a *Silo Metadata Proxy* section. Turning it on
+routes every TMDB request through the shared proxy at
+`https://metadata.siloserver.org` (or a self-hosted proxy URL you supply). The
+proxy holds the project credential and caches responses for all Silo
+installations, so scans reach TMDB far less often and no API key leaves your
+server. Saving the setting reloads the plugin; no server restart is needed.
 
 ## Dependency Model
 
