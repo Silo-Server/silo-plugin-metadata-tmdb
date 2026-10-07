@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -97,13 +98,13 @@ func (c *Client) doGet(ctx context.Context, path string, dest any) error {
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 		if err != nil {
-			return fmt.Errorf("tmdb: create request: %w", err)
+			return fmt.Errorf("tmdb: create request: %w", redactURLError(err, c.apiKey))
 		}
 		req.Header.Set("Accept", "application/json")
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
-			return fmt.Errorf("tmdb: request failed: %w", err)
+			return fmt.Errorf("tmdb: request failed: %w", redactURLError(err, c.apiKey))
 		}
 
 		// 429 Too Many Requests — respect Retry-After header.
@@ -156,6 +157,89 @@ func (c *Client) doGet(ctx context.Context, path string, dest any) error {
 		return nil
 	}
 	return fmt.Errorf("tmdb: max retries exceeded")
+}
+
+// redactURLError returns err with the api_key value masked and the fragment
+// removed in every requested URL it names. TMDB v3 authenticates with an
+// api_key query parameter, and net/http reports request failures as a
+// *url.Error whose text includes the full URL. The other query parameters
+// stay, so a failed search still names its title, year, and page. The Op and
+// the underlying cause are kept, so errors.Is and errors.As still reach
+// context.Canceled, *net.OpError, and the rest of the transport chain.
+//
+// err is expected to come straight from net/http, which returns a *url.Error
+// itself rather than wrapped. Any other error, including the cause below a
+// *url.Error, passes through unless its text contains apiKey. Then it is
+// replaced by a plain error with the key masked; net/http's error for a
+// redirect Location header it cannot parse quotes the header that way.
+func redactURLError(err error, apiKey string) error {
+	urlErr, ok := err.(*url.Error) //nolint:errorlint // net/http returns *url.Error unwrapped
+	if !ok {
+		return maskAPIKey(err, apiKey)
+	}
+	return &url.Error{
+		Op:  urlErr.Op,
+		URL: redactURL(urlErr.URL, apiKey),
+		// net/http never nests a *url.Error today; this is defensive.
+		Err: redactURLError(urlErr.Err, apiKey),
+	}
+}
+
+// maskAPIKey returns err unchanged unless its text contains apiKey, in which
+// case it returns a plain error with each occurrence replaced by REDACTED.
+func maskAPIKey(err error, apiKey string) error {
+	if err == nil || apiKey == "" {
+		return err
+	}
+	message := err.Error()
+	masked := maskAPIKeyText(message, apiKey)
+	if masked == message {
+		return err
+	}
+	return errors.New(masked)
+}
+
+// maskAPIKeyText replaces each raw or query-escaped occurrence of apiKey in
+// text with REDACTED.
+func maskAPIKeyText(text, apiKey string) string {
+	if apiKey == "" {
+		return text
+	}
+	masked := strings.ReplaceAll(text, apiKey, "REDACTED")
+	if escaped := url.QueryEscape(apiKey); escaped != apiKey {
+		masked = strings.ReplaceAll(masked, escaped, "REDACTED")
+	}
+	return masked
+}
+
+// redactURL drops rawURL's fragment, replaces the value of every api_key
+// query parameter with REDACTED, and masks any other occurrence of apiKey. It
+// works on the raw text so that a URL net/http could not parse is redacted
+// the same way.
+func redactURL(rawURL, apiKey string) string {
+	if i := strings.IndexByte(rawURL, '#'); i >= 0 {
+		rawURL = rawURL[:i]
+	}
+	if base, query, ok := strings.Cut(rawURL, "?"); ok {
+		params := strings.Split(query, "&")
+		for i, param := range params {
+			if isAPIKeyParam(param) {
+				params[i] = "api_key=REDACTED"
+			}
+		}
+		rawURL = base + "?" + strings.Join(params, "&")
+	}
+	return maskAPIKeyText(rawURL, apiKey)
+}
+
+// isAPIKeyParam reports whether a raw name=value query parameter is named
+// api_key, matching percent-encoded spellings such as %61pi_key too.
+func isAPIKeyParam(param string) bool {
+	name, _, _ := strings.Cut(param, "=")
+	if decoded, err := url.QueryUnescape(name); err == nil {
+		name = decoded
+	}
+	return name == "api_key"
 }
 
 // retryAfterOrDefault parses the Retry-After header (seconds) or falls back
