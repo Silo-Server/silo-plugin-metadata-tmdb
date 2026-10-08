@@ -243,6 +243,7 @@ func TestLoadConfigurationConcurrentFirstCalls(t *testing.T) {
 	}))
 	defer server.Close()
 
+	const want = "https://image.tmdb.org/t/p/w500/poster.jpg"
 	client := newKeyedTestClient(server.URL)
 	start := make(chan struct{})
 	var wg sync.WaitGroup
@@ -256,7 +257,10 @@ func TestLoadConfigurationConcurrentFirstCalls(t *testing.T) {
 			if i%2 == 0 {
 				if err := client.loadConfiguration(context.Background()); err != nil {
 					t.Errorf("loadConfiguration: %v", err)
+				} else if got := client.ImageURL("/poster.jpg", "w500"); got != want {
+					t.Errorf("ImageURL after loadConfiguration = %q, want %q", got, want)
 				}
+				return
 			}
 			_ = client.ImageURL("/poster.jpg", "w500")
 		}()
@@ -267,7 +271,7 @@ func TestLoadConfigurationConcurrentFirstCalls(t *testing.T) {
 	if got := fetches.Load(); got != 1 {
 		t.Fatalf("/configuration fetched %d times, want 1", got)
 	}
-	if got, want := client.ImageURL("/poster.jpg", "w500"), "https://image.tmdb.org/t/p/w500/poster.jpg"; got != want {
+	if got := client.ImageURL("/poster.jpg", "w500"); got != want {
 		t.Fatalf("ImageURL = %q, want %q", got, want)
 	}
 }
