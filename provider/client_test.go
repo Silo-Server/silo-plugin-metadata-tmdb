@@ -1,13 +1,17 @@
 package provider
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 
@@ -263,5 +267,117 @@ func TestRedactURLErrorPassesOtherErrorsThrough(t *testing.T) {
 	}
 	if err := redactURLError(context.DeadlineExceeded, testAPIKey); err != context.DeadlineExceeded { //nolint:errorlint // identity is the point
 		t.Fatalf("redactURLError changed a non-URL error: %v", err)
+	}
+}
+
+// longSeasonJSON returns a TMDB season response that holds every episode of a
+// long-running series in one season, as TMDB does for some shows. Each
+// episode carries a full overview and one crew and guest credit.
+func longSeasonJSON(t *testing.T, episodeCount int) []byte {
+	t.Helper()
+
+	overview := strings.Repeat("The family gathers for news that changes everything. ", 12)
+	season := SeasonDetail{ID: 7001, Name: "Season 1", SeasonNumber: 1, AirDate: "2001-01-01"}
+	for n := 1; n <= episodeCount; n++ {
+		season.Episodes = append(season.Episodes, EpisodeDetail{
+			ID:            100000 + n,
+			Name:          fmt.Sprintf("Episode %d", n),
+			Overview:      overview,
+			AirDate:       "2001-01-01",
+			EpisodeNumber: n,
+			SeasonNumber:  1,
+			Runtime:       22,
+			VoteAverage:   7.5,
+			VoteCount:     3,
+			StillPath:     fmt.Sprintf("/still%06d.jpg", n),
+			ShowID:        7000,
+			Crew:          []CrewMember{{ID: 1, Name: "A Director", Job: "Director", Department: "Directing"}},
+			GuestStars:    []CastMember{{ID: 2, Name: "A Guest", Character: "A Visitor"}},
+		})
+	}
+	body, err := json.Marshal(season)
+	if err != nil {
+		t.Fatalf("marshal season: %v", err)
+	}
+	return body
+}
+
+// TestGetSeasonDecodesSeasonsOverOneMegabyte covers a season whose response is
+// larger than the old 1 MB cap, which cut the body short and failed with
+// "decode response: unexpected EOF".
+func TestGetSeasonDecodesSeasonsOverOneMegabyte(t *testing.T) {
+	t.Parallel()
+
+	const episodeCount = 2000
+	body := longSeasonJSON(t, episodeCount)
+	if len(body) <= 1<<20 {
+		t.Fatalf("fixture is %d bytes, want over 1 MB", len(body))
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+
+	season, err := newKeyedTestClient(server.URL).GetSeason(context.Background(), 7000, 1, "en-US")
+	if err != nil {
+		t.Fatalf("GetSeason(%d-byte season): %v", len(body), err)
+	}
+	if got := len(season.Episodes); got != episodeCount {
+		t.Fatalf("got %d episodes, want %d", got, episodeCount)
+	}
+	last := season.Episodes[episodeCount-1]
+	if last.EpisodeNumber != episodeCount || last.StillPath != "/still002000.jpg" || len(last.GuestStars) != 1 {
+		t.Fatalf("last episode decoded wrongly: %+v", last)
+	}
+}
+
+// TestResponseSizeCap checks both sides of the cap with valid JSON: a body of
+// exactly maxResponseBody bytes decodes, and one byte more fails as too large
+// on the first request instead of being decoded truncated.
+func TestResponseSizeCap(t *testing.T) {
+	t.Parallel()
+
+	season := []byte(`{"id":7001,"season_number":1,"episodes":[]}`)
+	for _, tc := range []struct {
+		name     string
+		size     int
+		tooLarge bool
+	}{
+		{name: "at the cap", size: maxResponseBody},
+		{name: "one byte over the cap", size: maxResponseBody + 1, tooLarge: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// The season JSON followed by trailing whitespace, still valid.
+			body := bytes.Repeat([]byte(" "), tc.size)
+			copy(body, season)
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write(body)
+			}))
+			defer server.Close()
+
+			got, err := newKeyedTestClient(server.URL).GetSeason(context.Background(), 7000, 1, "en-US")
+			if n := requests.Load(); n != 1 {
+				t.Errorf("server saw %d requests, want 1", n)
+			}
+			if !tc.tooLarge {
+				if err != nil {
+					t.Fatalf("GetSeason(%d bytes): %v", tc.size, err)
+				}
+				if got.SeasonNumber != 1 {
+					t.Fatalf("season number = %d, want 1", got.SeasonNumber)
+				}
+				return
+			}
+			assertNoAPIKey(t, err)
+			if !errors.Is(err, errResponseTooLarge) {
+				t.Fatalf("GetSeason(%d bytes) error = %v, want errResponseTooLarge", tc.size, err)
+			}
+		})
 	}
 }
