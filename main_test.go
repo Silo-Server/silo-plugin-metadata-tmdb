@@ -494,3 +494,165 @@ func TestMetadataServerGetPersonDetail_CanonicalizesProfilePath(t *testing.T) {
 		t.Fatalf("provider_ids[imdb] = %v, want nm0000093", resp.GetPerson().GetProviderIds().AsMap()["imdb"])
 	}
 }
+
+func TestItemRatingsStructAddsTMDBSource(t *testing.T) {
+	tests := []struct {
+		name    string
+		ratings metadata.Ratings
+		want    map[string]any
+	}{
+		{
+			name:    "score and votes",
+			ratings: metadata.Ratings{TMDB: 7.634, TMDBVotes: 18523},
+			want: map[string]any{
+				"tmdb":    7.634,
+				"sources": map[string]any{"tmdb": map[string]any{"score": 76.34, "votes": float64(18523)}},
+			},
+		},
+		{
+			name:    "no votes leaves votes out",
+			ratings: metadata.Ratings{TMDB: 10},
+			want: map[string]any{
+				"tmdb":    10.0,
+				"sources": map[string]any{"tmdb": map[string]any{"score": 100.0}},
+			},
+		},
+		{
+			name:    "score rounds away float noise",
+			ratings: metadata.Ratings{TMDB: 9.123, TMDBVotes: 2},
+			want: map[string]any{
+				"tmdb":    9.123,
+				"sources": map[string]any{"tmdb": map[string]any{"score": 91.23, "votes": float64(2)}},
+			},
+		},
+		{
+			name:    "no TMDB average sends no source",
+			ratings: metadata.Ratings{IMDB: 8.1, TMDBVotes: 5},
+			want:    map[string]any{"imdb": 8.1},
+		},
+		{
+			name:    "no ratings",
+			ratings: metadata.Ratings{},
+			want:    nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := itemRatingsStruct(tt.ratings)
+			if tt.want == nil {
+				if got != nil {
+					t.Fatalf("itemRatingsStruct() = %v, want nil", got.AsMap())
+				}
+				return
+			}
+			if !reflect.DeepEqual(got.AsMap(), tt.want) {
+				t.Fatalf("itemRatingsStruct() = %v, want %v", got.AsMap(), tt.want)
+			}
+		})
+	}
+}
+
+func TestMetadataServer_SendsTMDBVotesForMoviesAndSeriesOnly(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch r.URL.Path {
+		case "/configuration":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"images": map[string]any{
+					"secure_base_url": "https://image.tmdb.org/t/p/",
+				},
+			})
+		case "/movie/550":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":           550,
+				"title":        "Movie",
+				"vote_average": 8.438,
+				"vote_count":   31250,
+			})
+		case "/tv/1399":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":           1399,
+				"name":         "Series",
+				"vote_average": 8.5,
+				"vote_count":   25611,
+			})
+		case "/tv/1399/season/1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"episodes": []map[string]any{{
+					"id":             63056,
+					"season_number":  1,
+					"episode_number": 1,
+					"vote_average":   7.9,
+					"vote_count":     420,
+				}},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := provider.NewClient(1000)
+	client.SetBaseURL(server.URL)
+
+	ms := &metadataServer{
+		runtime: &runtimeServer{
+			provider: provider.NewProviderWithClient(client),
+		},
+	}
+
+	tests := []struct {
+		itemType   string
+		providerID string
+		want       map[string]any
+	}{
+		{
+			itemType:   "movie",
+			providerID: "550",
+			want: map[string]any{
+				"tmdb":    8.438,
+				"sources": map[string]any{"tmdb": map[string]any{"score": 84.38, "votes": float64(31250)}},
+			},
+		},
+		{
+			itemType:   "series",
+			providerID: "1399",
+			want: map[string]any{
+				"tmdb":    8.5,
+				"sources": map[string]any{"tmdb": map[string]any{"score": 85.0, "votes": float64(25611)}},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.itemType, func(t *testing.T) {
+			resp, err := ms.GetMetadata(context.Background(), &pluginv1.GetMetadataRequest{
+				ProviderId: tt.providerID,
+				ItemType:   tt.itemType,
+			})
+			if err != nil {
+				t.Fatalf("GetMetadata() error = %v", err)
+			}
+			if got := resp.GetItem().GetRatings().AsMap(); !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("ratings = %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	t.Run("episodes keep only the average", func(t *testing.T) {
+		resp, err := ms.GetEpisodes(context.Background(), &pluginv1.GetEpisodesRequest{
+			SeriesProviderId: "1399",
+			SeasonNumber:     1,
+		})
+		if err != nil {
+			t.Fatalf("GetEpisodes() error = %v", err)
+		}
+		if len(resp.GetEpisodes()) != 1 {
+			t.Fatalf("len(episodes) = %d, want 1", len(resp.GetEpisodes()))
+		}
+		want := map[string]any{"tmdb": 7.9}
+		if got := resp.GetEpisodes()[0].GetRatings().AsMap(); !reflect.DeepEqual(got, want) {
+			t.Fatalf("episode ratings = %v, want %v", got, want)
+		}
+	})
+}
