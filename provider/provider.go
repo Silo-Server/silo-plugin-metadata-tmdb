@@ -432,6 +432,7 @@ func (p *Provider) getMovieMetadata(ctx context.Context, id int, lang string) (*
 
 	if movie.VoteAverage > 0 {
 		result.Ratings.TMDB = movie.VoteAverage
+		result.Ratings.TMDBVotes = movie.VoteCount
 	}
 
 	for _, g := range movie.Genres {
@@ -493,6 +494,7 @@ func (p *Provider) getTVMetadata(ctx context.Context, id int, lang string) (*met
 
 	if tv.VoteAverage > 0 {
 		result.Ratings.TMDB = tv.VoteAverage
+		result.Ratings.TMDBVotes = tv.VoteCount
 	}
 
 	for _, g := range tv.Genres {

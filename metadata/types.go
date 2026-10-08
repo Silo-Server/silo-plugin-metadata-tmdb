@@ -122,6 +122,7 @@ type VideoResult struct {
 type Ratings struct {
 	IMDB       float64
 	TMDB       float64
+	TMDBVotes  int // votes behind TMDB's average; 0 when TMDB reports none
 	RTCritic   float64
 	RTAudience float64
 }
