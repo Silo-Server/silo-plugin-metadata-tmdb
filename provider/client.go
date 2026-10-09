@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -34,9 +35,9 @@ type Client struct {
 	httpClient *http.Client
 	apiKey     string
 	baseURL    string
-	imageBase  string // cached from /configuration
+	imageBase  atomic.Pointer[string] // cached from /configuration
 	limiter    *rate.Limiter
-	configMu   sync.Mutex
+	configMu   sync.Mutex // serialises /configuration fetches
 }
 
 // NewClient creates a TMDB API client with the given rate limit (requests per
@@ -61,21 +62,31 @@ func (c *Client) ImageURL(path, size string) string {
 	if path == "" {
 		return ""
 	}
-	return c.imageBase + size + path
+	return c.imageBaseURL() + size + path
+}
+
+// imageBaseURL returns the cached image base URL, or "" before the first
+// successful loadConfiguration. Concurrent metadata requests read it while
+// another request may be storing it, so it is held in an atomic pointer.
+func (c *Client) imageBaseURL() string {
+	if base := c.imageBase.Load(); base != nil {
+		return *base
+	}
+	return ""
 }
 
 // loadConfiguration fetches /configuration and caches the image base URL.
 // Safe to call multiple times. Successful loads are cached, but transient
 // failures are retried so one canceled request does not poison the process.
 func (c *Client) loadConfiguration(ctx context.Context) error {
-	if c.imageBase != "" {
+	if c.imageBaseURL() != "" {
 		return nil
 	}
 
 	c.configMu.Lock()
 	defer c.configMu.Unlock()
 
-	if c.imageBase != "" {
+	if c.imageBaseURL() != "" {
 		return nil
 	}
 
@@ -83,7 +94,8 @@ func (c *Client) loadConfiguration(ctx context.Context) error {
 	if err := c.doGet(ctx, "/configuration", &cfg); err != nil {
 		return err
 	}
-	c.imageBase = cfg.Images.SecureBaseURL
+	base := cfg.Images.SecureBaseURL
+	c.imageBase.Store(&base)
 	return nil
 }
 

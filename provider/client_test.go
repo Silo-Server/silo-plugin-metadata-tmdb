@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -231,6 +232,82 @@ func TestStatusErrorLeavesOutTheAPIKey(t *testing.T) {
 	assertNoAPIKey(t, err)
 	if !strings.Contains(err.Error(), "HTTP 401") {
 		t.Fatalf("error lost its status: %v", err)
+	}
+}
+
+func TestLoadConfigurationConcurrentFirstCalls(t *testing.T) {
+	t.Parallel()
+
+	var fetches atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fetches.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"images":{"secure_base_url":"https://image.tmdb.org/t/p/"}}`))
+	}))
+	defer server.Close()
+
+	const want = "https://image.tmdb.org/t/p/w500/poster.jpg"
+	client := newKeyedTestClient(server.URL)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			// Half the callers load first, as a metadata request does; the
+			// rest only build image URLs, which can overlap the first load.
+			if i%2 == 0 {
+				if err := client.loadConfiguration(context.Background()); err != nil {
+					t.Errorf("loadConfiguration: %v", err)
+				} else if got := client.ImageURL("/poster.jpg", "w500"); got != want {
+					t.Errorf("ImageURL after loadConfiguration = %q, want %q", got, want)
+				}
+				return
+			}
+			_ = client.ImageURL("/poster.jpg", "w500")
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if got := fetches.Load(); got != 1 {
+		t.Fatalf("/configuration fetched %d times, want 1", got)
+	}
+	if got := client.ImageURL("/poster.jpg", "w500"); got != want {
+		t.Fatalf("ImageURL = %q, want %q", got, want)
+	}
+}
+
+func TestLoadConfigurationRetriesAfterAFailure(t *testing.T) {
+	t.Parallel()
+
+	var fetches atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if fetches.Add(1) == 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"status_code":7,"status_message":"Invalid API key"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"images":{"secure_base_url":"https://image.tmdb.org/t/p/"}}`))
+	}))
+	defer server.Close()
+
+	client := newKeyedTestClient(server.URL)
+	if err := client.loadConfiguration(context.Background()); err == nil {
+		t.Fatal("first loadConfiguration succeeded, want the HTTP 401 error")
+	}
+	for range 2 {
+		if err := client.loadConfiguration(context.Background()); err != nil {
+			t.Fatalf("loadConfiguration after a failure: %v", err)
+		}
+	}
+	if got := fetches.Load(); got != 2 {
+		t.Fatalf("/configuration fetched %d times, want 2", got)
+	}
+	if got, want := client.ImageURL("/poster.jpg", "w500"), "https://image.tmdb.org/t/p/w500/poster.jpg"; got != want {
+		t.Fatalf("ImageURL = %q, want %q", got, want)
 	}
 }
 
