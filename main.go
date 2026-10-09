@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 
@@ -419,7 +420,7 @@ func metadataItemFromResult(result *metadata.MetadataResult, itemType string) (*
 		OriginalLanguage:     result.OriginalLanguage,
 		ContentRating:        result.ContentRating,
 		ProviderIds:          providerIDs,
-		Ratings:              ratingsStruct(result.Ratings),
+		Ratings:              itemRatingsStruct(result.Ratings),
 		PosterPath:           tmdbCanonicalPath("poster", result.PosterPath),
 		PosterThumbhash:      result.PosterThumbhash,
 		BackdropPath:         tmdbCanonicalPath("backdrop", result.BackdropPath),
@@ -613,6 +614,25 @@ func structFromMap(value map[string]any) *structpb.Struct {
 
 func ratingsStruct(ratings metadata.Ratings) *structpb.Struct {
 	return structFromMap(ratingsMap(ratings))
+}
+
+// itemRatingsStruct is ratingsStruct for a movie or series, plus TMDB's rating
+// under "sources", the per-source shape the host stores with its vote count:
+// {"tmdb": {"score": 0-100, "votes": n}}. votes is left out when TMDB reports
+// none. Hosts that predate per-source ratings read only the number-valued keys
+// and skip "sources".
+func itemRatingsStruct(ratings metadata.Ratings) *structpb.Struct {
+	values := ratingsMap(ratings)
+	if ratings.TMDB > 0 {
+		// Two decimals on the 0-100 scale keep the three TMDB reports
+		// (8.437 is 84.37) and drop float noise such as 91.22999999999999.
+		tmdb := map[string]any{"score": math.Round(ratings.TMDB*1000) / 100}
+		if ratings.TMDBVotes > 0 {
+			tmdb["votes"] = float64(ratings.TMDBVotes)
+		}
+		values["sources"] = map[string]any{"tmdb": tmdb}
+	}
+	return structFromMap(values)
 }
 
 func metadataStruct(result *metadata.MetadataResult) *structpb.Struct {

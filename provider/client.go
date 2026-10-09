@@ -21,8 +21,14 @@ const (
 	defaultBaseURL  = "https://api.themoviedb.org/3"
 	defaultAPIKey   = "9c18082d4985d4a204bc88af823a6353"
 	maxRetries      = 3
-	maxResponseBody = 1 << 20 // 1 MB
+	maxResponseBody = 16 << 20 // 16 MiB, room for a season of thousands of episodes
+	maxErrorBody    = 1 << 20  // 1 MiB
 )
+
+// errResponseTooLarge reports a successful response larger than
+// maxResponseBody. TMDB returns every episode of a season in one response, so
+// a series filed as one long season is the first to reach it.
+var errResponseTooLarge = errors.New("tmdb: response too large")
 
 // Client is an HTTP client for the TMDB v3 API.
 type Client struct {
@@ -151,7 +157,7 @@ func (c *Client) doGet(ctx context.Context, path string, dest any) error {
 
 		// 4xx — client error, no retry.
 		if resp.StatusCode >= 400 {
-			body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
 			resp.Body.Close()
 			var apiErr apiError
 			if err := json.Unmarshal(body, &apiErr); err == nil && apiErr.StatusMessage != "" {
@@ -161,10 +167,18 @@ func (c *Client) doGet(ctx context.Context, path string, dest any) error {
 		}
 
 		// 2xx — decode response.
-		decodeErr := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBody)).Decode(dest)
+		// Reading one byte past the cap tells an oversized body apart from
+		// one that ends exactly at it, so it is never decoded truncated.
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
 		resp.Body.Close()
-		if decodeErr != nil {
-			return fmt.Errorf("tmdb: decode response: %w", decodeErr)
+		if readErr != nil {
+			return fmt.Errorf("tmdb: read response: %w", readErr)
+		}
+		if len(body) > maxResponseBody {
+			return fmt.Errorf("%w: over %d MiB", errResponseTooLarge, maxResponseBody>>20)
+		}
+		if err := json.Unmarshal(body, dest); err != nil {
+			return fmt.Errorf("tmdb: decode response: %w", err)
 		}
 		return nil
 	}
