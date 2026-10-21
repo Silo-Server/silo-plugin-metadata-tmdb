@@ -253,15 +253,16 @@ func (p *Provider) searchByTmdbID(ctx context.Context, id int, contentType, lang
 // filters narrow generic titles to the right show. TMDB treats those filters
 // as exact, so a folder one year off the first-air year finds nothing or only
 // other titles from that year. When no year-filtered result carries the
-// query's title, it also searches the year before and the year after, so every
-// same-title rival in that range reaches the host, which weighs the year
-// difference. A year-less search would return only TMDB's first page and could
-// hide a rival. If a neighbouring search fails, the year-filtered results are
-// returned, or the error when there are none.
+// query's title, it also searches the year before and the year after, and the
+// host weighs the year difference. The nearby results count only when every
+// search returned all its results on one page: a same-title rival on a later
+// page could otherwise lose to a nearby show the host accepts by default. If a
+// neighbouring search fails or is incomplete, the year-filtered results are
+// returned as they are, or the error when a search failed and there are none.
 func (p *Provider) searchByTitle(ctx context.Context, query metadata.SearchQuery) ([]metadata.SearchResult, error) {
 	language := tmdbLanguage(query.Language)
-	results, err := p.searchTitleYear(ctx, query.ContentType, query.Title, query.Year, language)
-	if err != nil || query.Year <= 1 || anyTitleMatches(query.Title, results) {
+	results, complete, err := p.searchTitleYear(ctx, query.ContentType, query.Title, query.Year, language)
+	if err != nil || query.Year <= 1 || !complete || anyTitleMatches(query.Title, results) {
 		return results, err
 	}
 	seen := make(map[string]bool, len(results))
@@ -270,12 +271,15 @@ func (p *Provider) searchByTitle(ctx context.Context, query metadata.SearchQuery
 	}
 	var nearby []metadata.SearchResult
 	for _, year := range []int{query.Year - 1, query.Year + 1} {
-		found, err := p.searchTitleYear(ctx, query.ContentType, query.Title, year, language)
+		found, complete, err := p.searchTitleYear(ctx, query.ContentType, query.Title, year, language)
 		if err != nil {
 			if len(results) > 0 {
 				return results, nil
 			}
 			return nil, err
+		}
+		if !complete {
+			return results, nil
 		}
 		for _, r := range found {
 			// Movie year= matches any release date, so check the primary year.
@@ -289,12 +293,14 @@ func (p *Provider) searchByTitle(ctx context.Context, query metadata.SearchQuery
 	return append(results, nearby...), nil
 }
 
-func (p *Provider) searchTitleYear(ctx context.Context, contentType, title string, year int, language string) ([]metadata.SearchResult, error) {
+// searchTitleYear runs one title search and reports whether TMDB returned
+// every result on the first page.
+func (p *Provider) searchTitleYear(ctx context.Context, contentType, title string, year int, language string) ([]metadata.SearchResult, bool, error) {
 	switch contentType {
 	case "movie":
-		results, err := p.client.SearchMovie(ctx, title, year, language)
+		results, complete, err := p.client.SearchMovie(ctx, title, year, language)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		var out []metadata.SearchResult
 		for _, r := range results {
@@ -312,11 +318,11 @@ func (p *Provider) searchTitleYear(ctx context.Context, contentType, title strin
 				Provider:         p.Slug(),
 			})
 		}
-		return out, nil
+		return out, complete, nil
 	case "series":
-		results, err := p.client.SearchTV(ctx, title, year, language)
+		results, complete, err := p.client.SearchTV(ctx, title, year, language)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		var out []metadata.SearchResult
 		for _, r := range results {
@@ -334,9 +340,9 @@ func (p *Provider) searchTitleYear(ctx context.Context, contentType, title strin
 				Provider:         p.Slug(),
 			})
 		}
-		return out, nil
+		return out, complete, nil
 	}
-	return nil, nil
+	return nil, true, nil
 }
 
 // anyTitleMatches reports whether a result's title or original title is the

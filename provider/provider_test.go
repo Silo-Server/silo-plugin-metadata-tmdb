@@ -288,6 +288,7 @@ func TestSearchTriesNeighbouringYearsWhenNoResultHasTheTitle(t *testing.T) {
 		title       string
 		year        int
 		byYear      map[string][]map[string]any // keyed by the year parameter TMDB received
+		morePages   string                      // year whose search has a second page
 		failNearby  bool
 		wantIDs     []string
 		wantErr     bool
@@ -340,6 +341,28 @@ func TestSearchTriesNeighbouringYearsWhenNoResultHasTheTitle(t *testing.T) {
 			},
 			wantIDs:   []string{"1", "2"},
 			wantYears: "2024,2023,2025",
+		},
+		{
+			name:        "incomplete year-filtered search skips the neighbours",
+			contentType: "movie",
+			title:       "Time",
+			year:        2019,
+			byYear:      map[string][]map[string]any{"2019": {movie(5, "Time Out", "2019-01-01")}},
+			morePages:   "2019",
+			wantIDs:     []string{"5"},
+			wantYears:   "2019",
+		},
+		{
+			name:        "incomplete neighbour search drops the nearby results",
+			contentType: "movie",
+			title:       "Time",
+			year:        2019,
+			byYear: map[string][]map[string]any{
+				"2018": {movie(622228, "Time", "2018-05-01")},
+				"2020": {movie(653729, "Time", "2020-10-09")},
+			},
+			morePages: "2018",
+			wantYears: "2019,2018",
 		},
 		{
 			name:        "year-filtered result already has the title",
@@ -403,7 +426,11 @@ func TestSearchTriesNeighbouringYearsWhenNoResultHasTheTitle(t *testing.T) {
 						_ = json.NewEncoder(w).Encode(map[string]any{"status_message": "Invalid API key"})
 						return
 					}
-					_ = json.NewEncoder(w).Encode(map[string]any{"results": tt.byYear[year]})
+					pages := 1
+					if year == tt.morePages {
+						pages = 2
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"results": tt.byYear[year], "total_pages": pages})
 				default:
 					t.Errorf("unexpected path: %s", r.URL.String())
 				}

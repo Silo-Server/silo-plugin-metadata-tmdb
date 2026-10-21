@@ -466,30 +466,32 @@ func (c *Client) GetCollectionPreset(ctx context.Context, preset, mediaType, tim
 	return results, nil
 }
 
-// SearchMovie searches TMDB for movies matching the query.
-func (c *Client) SearchMovie(ctx context.Context, query string, year int, language string) ([]MovieResult, error) {
+// SearchMovie searches TMDB for movies matching the query. It returns the
+// first page and whether that page holds every result.
+func (c *Client) SearchMovie(ctx context.Context, query string, year int, language string) ([]MovieResult, bool, error) {
 	path := "/search/movie?query=" + url.QueryEscape(query) + "&language=" + url.QueryEscape(language)
 	if year > 0 {
 		path += "&year=" + strconv.Itoa(year)
 	}
 	var resp paginatedResponse[MovieResult]
 	if err := c.doGet(ctx, path, &resp); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return resp.Results, nil
+	return resp.Results, resp.TotalPages <= 1, nil
 }
 
-// SearchTV searches TMDB for TV shows matching the query.
-func (c *Client) SearchTV(ctx context.Context, query string, year int, language string) ([]TVResult, error) {
+// SearchTV searches TMDB for TV shows matching the query. It returns the
+// first page and whether that page holds every result.
+func (c *Client) SearchTV(ctx context.Context, query string, year int, language string) ([]TVResult, bool, error) {
 	path := "/search/tv?query=" + url.QueryEscape(query) + "&language=" + url.QueryEscape(language)
 	if year > 0 {
 		path += "&first_air_date_year=" + strconv.Itoa(year)
 	}
 	var resp paginatedResponse[TVResult]
 	if err := c.doGet(ctx, path, &resp); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return resp.Results, nil
+	return resp.Results, resp.TotalPages <= 1, nil
 }
 
 // FindByExternalID looks up a TMDB entity by an external ID (e.g. IMDb,
