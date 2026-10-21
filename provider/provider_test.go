@@ -271,6 +271,144 @@ func TestSearchReturnsLocalizedAndOriginalTitles(t *testing.T) {
 	}
 }
 
+func TestSearchRetriesWithoutYearWhenNoResultHasTheTitle(t *testing.T) {
+	t.Parallel()
+
+	tv := func(id int, name, firstAir string) map[string]any {
+		return map[string]any{"id": id, "name": name, "original_name": name, "first_air_date": firstAir}
+	}
+	movie := func(id int, title, release string) map[string]any {
+		return map[string]any{"id": id, "title": title, "original_title": title, "release_date": release}
+	}
+
+	tests := []struct {
+		name        string
+		contentType string
+		title       string
+		year        int
+		withYear    []map[string]any
+		withoutYear []map[string]any
+		retryStatus int
+		wantIDs     []string
+		wantErr     bool
+		wantSearch  int
+	}{
+		{
+			name:        "series a year after its first air date",
+			contentType: "series",
+			title:       "Bridgerton",
+			year:        2021,
+			withYear:    []map[string]any{tv(115549, "The Netflix Afterparty", "2021-01-02")},
+			withoutYear: []map[string]any{
+				tv(91239, "Bridgerton", "2020-12-25"),
+				tv(115549, "The Netflix Afterparty", "2021-01-02"),
+				tv(7, "Bridgerton", "1990-01-01"),
+			},
+			wantIDs:    []string{"115549", "91239"},
+			wantSearch: 2,
+		},
+		{
+			name:        "movie with no result in the folder year",
+			contentType: "movie",
+			title:       "Some Film",
+			year:        2007,
+			withoutYear: []map[string]any{movie(1417, "Some Film", "2006-05-27")},
+			wantIDs:     []string{"1417"},
+			wantSearch:  2,
+		},
+		{
+			name:        "year-filtered result already has the title",
+			contentType: "series",
+			title:       "Shogun & Sons",
+			year:        2024,
+			withYear:    []map[string]any{tv(126308, "Shōgun and Sons", "2024-02-27")},
+			wantIDs:     []string{"126308"},
+			wantSearch:  1,
+		},
+		{
+			name:        "leading article does not trigger a retry",
+			contentType: "series",
+			title:       "Office",
+			year:        2005,
+			withYear:    []map[string]any{tv(2316, "The Office", "2005-03-24")},
+			wantIDs:     []string{"2316"},
+			wantSearch:  1,
+		},
+		{
+			name:        "failed retry keeps the year-filtered results",
+			contentType: "series",
+			title:       "Bridgerton",
+			year:        2021,
+			withYear:    []map[string]any{tv(115549, "The Netflix Afterparty", "2021-01-02")},
+			retryStatus: http.StatusUnauthorized,
+			wantIDs:     []string{"115549"},
+			wantSearch:  2,
+		},
+		{
+			name:        "failed retry with no year-filtered results is reported",
+			contentType: "series",
+			title:       "The Expanse",
+			year:        2016,
+			retryStatus: http.StatusUnauthorized,
+			wantErr:     true,
+			wantSearch:  2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var searches int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/configuration":
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"images": map[string]any{"secure_base_url": serverURL(t, r) + "/images/"},
+					})
+				case "/search/tv", "/search/movie":
+					searches++
+					query := r.URL.Query()
+					if query.Has("year") || query.Has("first_air_date_year") {
+						_ = json.NewEncoder(w).Encode(map[string]any{"results": tt.withYear})
+						return
+					}
+					if tt.retryStatus != 0 {
+						w.WriteHeader(tt.retryStatus)
+						_ = json.NewEncoder(w).Encode(map[string]any{"status_message": "Invalid API key"})
+						return
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"results": tt.withoutYear})
+				default:
+					t.Errorf("unexpected path: %s", r.URL.String())
+				}
+			}))
+			defer server.Close()
+
+			results, err := newTMDBTestProvider(server.URL).Search(context.Background(), metadata.SearchQuery{
+				Title:       tt.title,
+				Year:        tt.year,
+				ContentType: tt.contentType,
+				Language:    "en",
+			})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Search() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if searches != tt.wantSearch {
+				t.Fatalf("search requests = %d, want %d", searches, tt.wantSearch)
+			}
+			var gotIDs []string
+			for _, r := range results {
+				gotIDs = append(gotIDs, r.ProviderIDs["tmdb"])
+			}
+			if strings.Join(gotIDs, ",") != strings.Join(tt.wantIDs, ",") {
+				t.Fatalf("result IDs = %v, want %v", gotIDs, tt.wantIDs)
+			}
+		})
+	}
+}
+
 func TestGetMetadataReturnsAlternativeTitlesAndMarksNativeFallback(t *testing.T) {
 	t.Parallel()
 

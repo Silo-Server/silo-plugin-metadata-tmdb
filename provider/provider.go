@@ -6,9 +6,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/Silo-Server/silo-plugin-tmdb/metadata"
 	"github.com/Silo-Server/silo-plugin-tmdb/models"
+	"golang.org/x/text/unicode/norm"
 )
 
 const defaultTMDBLanguage = "en-US"
@@ -247,11 +249,49 @@ func (p *Provider) searchByTmdbID(ctx context.Context, id int, contentType, lang
 	return nil, nil
 }
 
+// yearRetryWindow bounds the years a year-less retry may add. The host rejects
+// an automatic match more than two years from the folder year, and a distant
+// same-title rival would only make a correct nearby match look ambiguous.
+const yearRetryWindow = 2
+
+// searchByTitle searches with the folder year first, because TMDB's year
+// filters narrow generic titles to the right show. TMDB treats those filters
+// as exact, so a folder one year off the first-air year finds nothing or only
+// other titles from that year. When no year-filtered result carries the
+// query's title, it searches again without the year and adds results within
+// yearRetryWindow years; the host weighs the year difference. A failed retry
+// fails the search only when the year-filtered search found nothing.
 func (p *Provider) searchByTitle(ctx context.Context, query metadata.SearchQuery) ([]metadata.SearchResult, error) {
-	switch query.ContentType {
+	language := tmdbLanguage(query.Language)
+	results, err := p.searchTitleYear(ctx, query.ContentType, query.Title, query.Year, language)
+	if err != nil || query.Year <= 0 || anyTitleMatches(query.Title, results) {
+		return results, err
+	}
+	retry, err := p.searchTitleYear(ctx, query.ContentType, query.Title, 0, language)
+	if err != nil {
+		if len(results) > 0 {
+			return results, nil
+		}
+		return nil, err
+	}
+	seen := make(map[string]bool, len(results))
+	for _, r := range results {
+		seen[r.ProviderIDs["tmdb"]] = true
+	}
+	for _, r := range retry {
+		if seen[r.ProviderIDs["tmdb"]] || r.Year == 0 || absInt(r.Year-query.Year) > yearRetryWindow {
+			continue
+		}
+		seen[r.ProviderIDs["tmdb"]] = true
+		results = append(results, r)
+	}
+	return results, nil
+}
+
+func (p *Provider) searchTitleYear(ctx context.Context, contentType, title string, year int, language string) ([]metadata.SearchResult, error) {
+	switch contentType {
 	case "movie":
-		language := tmdbLanguage(query.Language)
-		results, err := p.client.SearchMovie(ctx, query.Title, query.Year, language)
+		results, err := p.client.SearchMovie(ctx, title, year, language)
 		if err != nil {
 			return nil, err
 		}
@@ -273,8 +313,7 @@ func (p *Provider) searchByTitle(ctx context.Context, query metadata.SearchQuery
 		}
 		return out, nil
 	case "series":
-		language := tmdbLanguage(query.Language)
-		results, err := p.client.SearchTV(ctx, query.Title, query.Year, language)
+		results, err := p.client.SearchTV(ctx, title, year, language)
 		if err != nil {
 			return nil, err
 		}
@@ -297,6 +336,50 @@ func (p *Provider) searchByTitle(ctx context.Context, query metadata.SearchQuery
 		return out, nil
 	}
 	return nil, nil
+}
+
+// anyTitleMatches reports whether a result's title or original title is the
+// query title, ignoring case, accents, punctuation, "&" against "and", and a
+// leading article. It only decides whether to search again, so a miss costs
+// one extra request.
+func anyTitleMatches(query string, results []metadata.SearchResult) bool {
+	want := searchTitleKey(query)
+	if want == "" {
+		return true
+	}
+	for _, r := range results {
+		if searchTitleKey(r.Name) == want || searchTitleKey(r.OriginalTitle) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func searchTitleKey(title string) string {
+	var b strings.Builder
+	for _, r := range norm.NFD.String(strings.ToLower(title)) {
+		switch {
+		case unicode.Is(unicode.Mn, r):
+		case r == '&':
+			b.WriteString(" and ")
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			b.WriteRune(r)
+		default:
+			b.WriteRune(' ')
+		}
+	}
+	words := strings.Fields(b.String())
+	if len(words) > 1 && (words[0] == "the" || words[0] == "a" || words[0] == "an") {
+		words = words[1:]
+	}
+	return strings.Join(words, " ")
+}
+
+func absInt(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 func (p *Provider) findByExternalID(ctx context.Context, externalID, source, mediaType string) (int, error) {
