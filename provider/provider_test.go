@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -271,7 +272,7 @@ func TestSearchReturnsLocalizedAndOriginalTitles(t *testing.T) {
 	}
 }
 
-func TestSearchRetriesWithoutYearWhenNoResultHasTheTitle(t *testing.T) {
+func TestSearchTriesNeighbouringYearsWhenNoResultHasTheTitle(t *testing.T) {
 	t.Parallel()
 
 	tv := func(id int, name, firstAir string) map[string]any {
@@ -286,72 +287,96 @@ func TestSearchRetriesWithoutYearWhenNoResultHasTheTitle(t *testing.T) {
 		contentType string
 		title       string
 		year        int
-		withYear    []map[string]any
-		withoutYear []map[string]any
-		retryStatus int
+		byYear      map[string][]map[string]any // keyed by the year parameter TMDB received
+		failNearby  bool
 		wantIDs     []string
 		wantErr     bool
-		wantSearch  int
+		wantYears   string
 	}{
 		{
 			name:        "series a year after its first air date",
 			contentType: "series",
 			title:       "Bridgerton",
 			year:        2021,
-			withYear:    []map[string]any{tv(115549, "The Netflix Afterparty", "2021-01-02")},
-			withoutYear: []map[string]any{
-				tv(91239, "Bridgerton", "2020-12-25"),
-				tv(115549, "The Netflix Afterparty", "2021-01-02"),
-				tv(7, "Bridgerton", "1990-01-01"),
+			byYear: map[string][]map[string]any{
+				"2021": {tv(115549, "The Netflix Afterparty", "2021-01-02")},
+				"2020": {tv(91239, "Bridgerton", "2020-12-25")},
 			},
-			wantIDs:    []string{"115549", "91239"},
-			wantSearch: 2,
+			wantIDs:   []string{"115549", "91239"},
+			wantYears: "2021,2020,2022",
 		},
 		{
-			name:        "movie with no result in the folder year",
+			name:        "same-title rivals on both sides are all returned",
+			contentType: "series",
+			title:       "Life",
+			year:        2008,
+			byYear: map[string][]map[string]any{
+				"2007": {tv(3797, "Life", "2007-09-26"), tv(9670, "Life", "2007-01-01")},
+				"2009": {tv(16946, "Life", "2009-10-12")},
+			},
+			wantIDs:   []string{"3797", "9670", "16946"},
+			wantYears: "2008,2007,2009",
+		},
+		{
+			name:        "movie outside the window is dropped",
 			contentType: "movie",
 			title:       "Some Film",
 			year:        2007,
-			withoutYear: []map[string]any{movie(1417, "Some Film", "2006-05-27")},
-			wantIDs:     []string{"1417"},
-			wantSearch:  2,
+			byYear: map[string][]map[string]any{
+				"2006": {movie(1417, "Some Film", "2006-05-27")},
+				"2008": {movie(7, "Some Film", "1990-01-01")},
+			},
+			wantIDs:   []string{"1417"},
+			wantYears: "2007,2006,2008",
+		},
+		{
+			name:        "kana voicing marks still tell titles apart",
+			contentType: "series",
+			title:       "パパ",
+			year:        2024,
+			byYear: map[string][]map[string]any{
+				"2024": {tv(1, "ババ", "2024-04-01")},
+				"2023": {tv(2, "パパ", "2023-04-01")},
+			},
+			wantIDs:   []string{"1", "2"},
+			wantYears: "2024,2023,2025",
 		},
 		{
 			name:        "year-filtered result already has the title",
 			contentType: "series",
 			title:       "Shogun & Sons",
 			year:        2024,
-			withYear:    []map[string]any{tv(126308, "Shōgun and Sons", "2024-02-27")},
+			byYear:      map[string][]map[string]any{"2024": {tv(126308, "Shōgun and Sons", "2024-02-27")}},
 			wantIDs:     []string{"126308"},
-			wantSearch:  1,
+			wantYears:   "2024",
 		},
 		{
 			name:        "leading article does not trigger a retry",
 			contentType: "series",
 			title:       "Office",
 			year:        2005,
-			withYear:    []map[string]any{tv(2316, "The Office", "2005-03-24")},
+			byYear:      map[string][]map[string]any{"2005": {tv(2316, "The Office", "2005-03-24")}},
 			wantIDs:     []string{"2316"},
-			wantSearch:  1,
+			wantYears:   "2005",
 		},
 		{
 			name:        "failed retry keeps the year-filtered results",
 			contentType: "series",
 			title:       "Bridgerton",
 			year:        2021,
-			withYear:    []map[string]any{tv(115549, "The Netflix Afterparty", "2021-01-02")},
-			retryStatus: http.StatusUnauthorized,
+			byYear:      map[string][]map[string]any{"2021": {tv(115549, "The Netflix Afterparty", "2021-01-02")}},
+			failNearby:  true,
 			wantIDs:     []string{"115549"},
-			wantSearch:  2,
+			wantYears:   "2021,2020",
 		},
 		{
 			name:        "failed retry with no year-filtered results is reported",
 			contentType: "series",
 			title:       "The Expanse",
 			year:        2016,
-			retryStatus: http.StatusUnauthorized,
+			failNearby:  true,
 			wantErr:     true,
-			wantSearch:  2,
+			wantYears:   "2016,2015",
 		},
 	}
 
@@ -359,7 +384,7 @@ func TestSearchRetriesWithoutYearWhenNoResultHasTheTitle(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			var searches int
+			var years []string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
@@ -368,18 +393,17 @@ func TestSearchRetriesWithoutYearWhenNoResultHasTheTitle(t *testing.T) {
 						"images": map[string]any{"secure_base_url": serverURL(t, r) + "/images/"},
 					})
 				case "/search/tv", "/search/movie":
-					searches++
-					query := r.URL.Query()
-					if query.Has("year") || query.Has("first_air_date_year") {
-						_ = json.NewEncoder(w).Encode(map[string]any{"results": tt.withYear})
-						return
+					year := r.URL.Query().Get("first_air_date_year")
+					if r.URL.Path == "/search/movie" {
+						year = r.URL.Query().Get("year")
 					}
-					if tt.retryStatus != 0 {
-						w.WriteHeader(tt.retryStatus)
+					years = append(years, year)
+					if tt.failNearby && year != strconv.Itoa(tt.year) {
+						w.WriteHeader(http.StatusUnauthorized)
 						_ = json.NewEncoder(w).Encode(map[string]any{"status_message": "Invalid API key"})
 						return
 					}
-					_ = json.NewEncoder(w).Encode(map[string]any{"results": tt.withoutYear})
+					_ = json.NewEncoder(w).Encode(map[string]any{"results": tt.byYear[year]})
 				default:
 					t.Errorf("unexpected path: %s", r.URL.String())
 				}
@@ -395,8 +419,8 @@ func TestSearchRetriesWithoutYearWhenNoResultHasTheTitle(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("Search() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if searches != tt.wantSearch {
-				t.Fatalf("search requests = %d, want %d", searches, tt.wantSearch)
+			if got := strings.Join(years, ","); got != tt.wantYears {
+				t.Fatalf("searched years = %s, want %s", got, tt.wantYears)
 			}
 			var gotIDs []string
 			for _, r := range results {

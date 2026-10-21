@@ -249,43 +249,44 @@ func (p *Provider) searchByTmdbID(ctx context.Context, id int, contentType, lang
 	return nil, nil
 }
 
-// yearRetryWindow bounds the years a year-less retry may add. The host rejects
-// an automatic match more than two years from the folder year, and a distant
-// same-title rival would only make a correct nearby match look ambiguous.
-const yearRetryWindow = 2
-
 // searchByTitle searches with the folder year first, because TMDB's year
 // filters narrow generic titles to the right show. TMDB treats those filters
 // as exact, so a folder one year off the first-air year finds nothing or only
 // other titles from that year. When no year-filtered result carries the
-// query's title, it searches again without the year and adds results within
-// yearRetryWindow years; the host weighs the year difference. A failed retry
-// fails the search only when the year-filtered search found nothing.
+// query's title, it also searches the year before and the year after, so every
+// same-title rival in that range reaches the host, which weighs the year
+// difference. A year-less search would return only TMDB's first page and could
+// hide a rival. If a neighbouring search fails, the year-filtered results are
+// returned, or the error when there are none.
 func (p *Provider) searchByTitle(ctx context.Context, query metadata.SearchQuery) ([]metadata.SearchResult, error) {
 	language := tmdbLanguage(query.Language)
 	results, err := p.searchTitleYear(ctx, query.ContentType, query.Title, query.Year, language)
-	if err != nil || query.Year <= 0 || anyTitleMatches(query.Title, results) {
+	if err != nil || query.Year <= 1 || anyTitleMatches(query.Title, results) {
 		return results, err
-	}
-	retry, err := p.searchTitleYear(ctx, query.ContentType, query.Title, 0, language)
-	if err != nil {
-		if len(results) > 0 {
-			return results, nil
-		}
-		return nil, err
 	}
 	seen := make(map[string]bool, len(results))
 	for _, r := range results {
 		seen[r.ProviderIDs["tmdb"]] = true
 	}
-	for _, r := range retry {
-		if seen[r.ProviderIDs["tmdb"]] || r.Year == 0 || absInt(r.Year-query.Year) > yearRetryWindow {
-			continue
+	var nearby []metadata.SearchResult
+	for _, year := range []int{query.Year - 1, query.Year + 1} {
+		found, err := p.searchTitleYear(ctx, query.ContentType, query.Title, year, language)
+		if err != nil {
+			if len(results) > 0 {
+				return results, nil
+			}
+			return nil, err
 		}
-		seen[r.ProviderIDs["tmdb"]] = true
-		results = append(results, r)
+		for _, r := range found {
+			// Movie year= matches any release date, so check the primary year.
+			if seen[r.ProviderIDs["tmdb"]] || r.Year == 0 || absInt(r.Year-query.Year) > 1 {
+				continue
+			}
+			seen[r.ProviderIDs["tmdb"]] = true
+			nearby = append(nearby, r)
+		}
 	}
-	return results, nil
+	return append(results, nearby...), nil
 }
 
 func (p *Provider) searchTitleYear(ctx context.Context, contentType, title string, year int, language string) ([]metadata.SearchResult, error) {
@@ -357,9 +358,18 @@ func anyTitleMatches(query string, results []metadata.SearchResult) bool {
 
 func searchTitleKey(title string) string {
 	var b strings.Builder
+	latinBase := false
 	for _, r := range norm.NFD.String(strings.ToLower(title)) {
+		if unicode.Is(unicode.Mn, r) {
+			// Drop accents on Latin letters only; in other scripts a mark
+			// changes the letter (パ, バ and ハ differ only by one).
+			if !latinBase {
+				b.WriteRune(r)
+			}
+			continue
+		}
+		latinBase = unicode.Is(unicode.Latin, r)
 		switch {
-		case unicode.Is(unicode.Mn, r):
 		case r == '&':
 			b.WriteString(" and ")
 		case unicode.IsLetter(r) || unicode.IsDigit(r):
