@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -268,6 +269,194 @@ func TestSearchReturnsLocalizedAndOriginalTitles(t *testing.T) {
 	}
 	if len(got.TitleAliases) != 1 || got.TitleAliases[0].Title != "Dieci trucchi" || got.TitleAliases[0].Kind != "original" {
 		t.Fatalf("aliases = %#v, want original title", got.TitleAliases)
+	}
+}
+
+func TestSearchTriesNeighbouringYearsWhenNoResultHasTheTitle(t *testing.T) {
+	t.Parallel()
+
+	tv := func(id int, name, firstAir string) map[string]any {
+		return map[string]any{"id": id, "name": name, "original_name": name, "first_air_date": firstAir}
+	}
+	movie := func(id int, title, release string) map[string]any {
+		return map[string]any{"id": id, "title": title, "original_title": title, "release_date": release}
+	}
+
+	tests := []struct {
+		name        string
+		contentType string
+		title       string
+		year        int
+		byYear      map[string][]map[string]any // keyed by the year parameter TMDB received
+		morePages   string                      // year whose search has a second page
+		failNearby  bool
+		wantIDs     []string
+		wantErr     bool
+		wantYears   string
+	}{
+		{
+			name:        "series a year after its first air date",
+			contentType: "series",
+			title:       "Bridgerton",
+			year:        2021,
+			byYear: map[string][]map[string]any{
+				"2021": {tv(115549, "The Netflix Afterparty", "2021-01-02")},
+				"2020": {tv(91239, "Bridgerton", "2020-12-25")},
+			},
+			wantIDs:   []string{"115549", "91239"},
+			wantYears: "2021,2020,2022",
+		},
+		{
+			name:        "same-title rivals on both sides are all returned",
+			contentType: "series",
+			title:       "Life",
+			year:        2008,
+			byYear: map[string][]map[string]any{
+				"2007": {tv(3797, "Life", "2007-09-26"), tv(9670, "Life", "2007-01-01")},
+				"2009": {tv(16946, "Life", "2009-10-12")},
+			},
+			wantIDs:   []string{"3797", "9670", "16946"},
+			wantYears: "2008,2007,2009",
+		},
+		{
+			name:        "movie outside the window is dropped",
+			contentType: "movie",
+			title:       "Some Film",
+			year:        2007,
+			byYear: map[string][]map[string]any{
+				"2006": {movie(1417, "Some Film", "2006-05-27")},
+				"2008": {movie(7, "Some Film", "1990-01-01")},
+			},
+			wantIDs:   []string{"1417"},
+			wantYears: "2007,2006,2008",
+		},
+		{
+			name:        "kana voicing marks still tell titles apart",
+			contentType: "series",
+			title:       "パパ",
+			year:        2024,
+			byYear: map[string][]map[string]any{
+				"2024": {tv(1, "ババ", "2024-04-01")},
+				"2023": {tv(2, "パパ", "2023-04-01")},
+			},
+			wantIDs:   []string{"1", "2"},
+			wantYears: "2024,2023,2025",
+		},
+		{
+			name:        "incomplete year-filtered search skips the neighbours",
+			contentType: "movie",
+			title:       "Time",
+			year:        2019,
+			byYear:      map[string][]map[string]any{"2019": {movie(5, "Time Out", "2019-01-01")}},
+			morePages:   "2019",
+			wantIDs:     []string{"5"},
+			wantYears:   "2019",
+		},
+		{
+			name:        "incomplete neighbour search drops the nearby results",
+			contentType: "movie",
+			title:       "Time",
+			year:        2019,
+			byYear: map[string][]map[string]any{
+				"2018": {movie(622228, "Time", "2018-05-01")},
+				"2020": {movie(653729, "Time", "2020-10-09")},
+			},
+			morePages: "2018",
+			wantYears: "2019,2018",
+		},
+		{
+			name:        "year-filtered result already has the title",
+			contentType: "series",
+			title:       "Shogun & Sons",
+			year:        2024,
+			byYear:      map[string][]map[string]any{"2024": {tv(126308, "Shōgun and Sons", "2024-02-27")}},
+			wantIDs:     []string{"126308"},
+			wantYears:   "2024",
+		},
+		{
+			name:        "leading article does not trigger a retry",
+			contentType: "series",
+			title:       "Office",
+			year:        2005,
+			byYear:      map[string][]map[string]any{"2005": {tv(2316, "The Office", "2005-03-24")}},
+			wantIDs:     []string{"2316"},
+			wantYears:   "2005",
+		},
+		{
+			name:        "failed retry keeps the year-filtered results",
+			contentType: "series",
+			title:       "Bridgerton",
+			year:        2021,
+			byYear:      map[string][]map[string]any{"2021": {tv(115549, "The Netflix Afterparty", "2021-01-02")}},
+			failNearby:  true,
+			wantIDs:     []string{"115549"},
+			wantYears:   "2021,2020",
+		},
+		{
+			name:        "failed retry with no year-filtered results is reported",
+			contentType: "series",
+			title:       "The Expanse",
+			year:        2016,
+			failNearby:  true,
+			wantErr:     true,
+			wantYears:   "2016,2015",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var years []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/configuration":
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"images": map[string]any{"secure_base_url": serverURL(t, r) + "/images/"},
+					})
+				case "/search/tv", "/search/movie":
+					year := r.URL.Query().Get("first_air_date_year")
+					if r.URL.Path == "/search/movie" {
+						year = r.URL.Query().Get("year")
+					}
+					years = append(years, year)
+					if tt.failNearby && year != strconv.Itoa(tt.year) {
+						w.WriteHeader(http.StatusUnauthorized)
+						_ = json.NewEncoder(w).Encode(map[string]any{"status_message": "Invalid API key"})
+						return
+					}
+					pages := 1
+					if year == tt.morePages {
+						pages = 2
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"results": tt.byYear[year], "total_pages": pages})
+				default:
+					t.Errorf("unexpected path: %s", r.URL.String())
+				}
+			}))
+			defer server.Close()
+
+			results, err := newTMDBTestProvider(server.URL).Search(context.Background(), metadata.SearchQuery{
+				Title:       tt.title,
+				Year:        tt.year,
+				ContentType: tt.contentType,
+				Language:    "en",
+			})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Search() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if got := strings.Join(years, ","); got != tt.wantYears {
+				t.Fatalf("searched years = %s, want %s", got, tt.wantYears)
+			}
+			var gotIDs []string
+			for _, r := range results {
+				gotIDs = append(gotIDs, r.ProviderIDs["tmdb"])
+			}
+			if strings.Join(gotIDs, ",") != strings.Join(tt.wantIDs, ",") {
+				t.Fatalf("result IDs = %v, want %v", gotIDs, tt.wantIDs)
+			}
+		})
 	}
 }
 

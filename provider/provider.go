@@ -6,9 +6,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/Silo-Server/silo-plugin-tmdb/metadata"
 	"github.com/Silo-Server/silo-plugin-tmdb/models"
+	"golang.org/x/text/unicode/norm"
 )
 
 const defaultTMDBLanguage = "en-US"
@@ -247,13 +249,58 @@ func (p *Provider) searchByTmdbID(ctx context.Context, id int, contentType, lang
 	return nil, nil
 }
 
+// searchByTitle searches with the folder year first, because TMDB's year
+// filters narrow generic titles to the right show. TMDB treats those filters
+// as exact, so a folder one year off the first-air year finds nothing or only
+// other titles from that year. When no year-filtered result carries the
+// query's title, it also searches the year before and the year after, and the
+// host weighs the year difference. The nearby results count only when every
+// search returned all its results on one page: a same-title rival on a later
+// page could otherwise lose to a nearby show the host accepts by default. If a
+// neighbouring search fails or is incomplete, the year-filtered results are
+// returned as they are, or the error when a search failed and there are none.
 func (p *Provider) searchByTitle(ctx context.Context, query metadata.SearchQuery) ([]metadata.SearchResult, error) {
-	switch query.ContentType {
-	case "movie":
-		language := tmdbLanguage(query.Language)
-		results, err := p.client.SearchMovie(ctx, query.Title, query.Year, language)
+	language := tmdbLanguage(query.Language)
+	results, complete, err := p.searchTitleYear(ctx, query.ContentType, query.Title, query.Year, language)
+	if err != nil || query.Year <= 1 || !complete || anyTitleMatches(query.Title, results) {
+		return results, err
+	}
+	seen := make(map[string]bool, len(results))
+	for _, r := range results {
+		seen[r.ProviderIDs["tmdb"]] = true
+	}
+	var nearby []metadata.SearchResult
+	for _, year := range []int{query.Year - 1, query.Year + 1} {
+		found, complete, err := p.searchTitleYear(ctx, query.ContentType, query.Title, year, language)
 		if err != nil {
+			if len(results) > 0 {
+				return results, nil
+			}
 			return nil, err
+		}
+		if !complete {
+			return results, nil
+		}
+		for _, r := range found {
+			// Movie year= matches any release date, so check the primary year.
+			if seen[r.ProviderIDs["tmdb"]] || r.Year == 0 || absInt(r.Year-query.Year) > 1 {
+				continue
+			}
+			seen[r.ProviderIDs["tmdb"]] = true
+			nearby = append(nearby, r)
+		}
+	}
+	return append(results, nearby...), nil
+}
+
+// searchTitleYear runs one title search and reports whether TMDB returned
+// every result on the first page.
+func (p *Provider) searchTitleYear(ctx context.Context, contentType, title string, year int, language string) ([]metadata.SearchResult, bool, error) {
+	switch contentType {
+	case "movie":
+		results, complete, err := p.client.SearchMovie(ctx, title, year, language)
+		if err != nil {
+			return nil, false, err
 		}
 		var out []metadata.SearchResult
 		for _, r := range results {
@@ -271,12 +318,11 @@ func (p *Provider) searchByTitle(ctx context.Context, query metadata.SearchQuery
 				Provider:         p.Slug(),
 			})
 		}
-		return out, nil
+		return out, complete, nil
 	case "series":
-		language := tmdbLanguage(query.Language)
-		results, err := p.client.SearchTV(ctx, query.Title, query.Year, language)
+		results, complete, err := p.client.SearchTV(ctx, title, year, language)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		var out []metadata.SearchResult
 		for _, r := range results {
@@ -294,9 +340,62 @@ func (p *Provider) searchByTitle(ctx context.Context, query metadata.SearchQuery
 				Provider:         p.Slug(),
 			})
 		}
-		return out, nil
+		return out, complete, nil
 	}
-	return nil, nil
+	return nil, true, nil
+}
+
+// anyTitleMatches reports whether a result's title or original title is the
+// query title, ignoring case, accents, punctuation, "&" against "and", and a
+// leading article. It only decides whether to search again, so a miss costs
+// one extra request.
+func anyTitleMatches(query string, results []metadata.SearchResult) bool {
+	want := searchTitleKey(query)
+	if want == "" {
+		return true
+	}
+	for _, r := range results {
+		if searchTitleKey(r.Name) == want || searchTitleKey(r.OriginalTitle) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func searchTitleKey(title string) string {
+	var b strings.Builder
+	latinBase := false
+	for _, r := range norm.NFD.String(strings.ToLower(title)) {
+		if unicode.Is(unicode.Mn, r) {
+			// Drop accents on Latin letters only; in other scripts a mark
+			// changes the letter (パ, バ and ハ differ only by one).
+			if !latinBase {
+				b.WriteRune(r)
+			}
+			continue
+		}
+		latinBase = unicode.Is(unicode.Latin, r)
+		switch {
+		case r == '&':
+			b.WriteString(" and ")
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			b.WriteRune(r)
+		default:
+			b.WriteRune(' ')
+		}
+	}
+	words := strings.Fields(b.String())
+	if len(words) > 1 && (words[0] == "the" || words[0] == "a" || words[0] == "an") {
+		words = words[1:]
+	}
+	return strings.Join(words, " ")
+}
+
+func absInt(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 func (p *Provider) findByExternalID(ctx context.Context, externalID, source, mediaType string) (int, error) {
