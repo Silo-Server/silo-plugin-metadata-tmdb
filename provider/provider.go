@@ -818,11 +818,17 @@ func imageLanguage(lang string) string {
 
 func tmdbImageLanguages(lang string) string {
 	requested := strings.TrimSpace(lang)
-	languages := make([]string, 0, 3)
+	base := baseLanguage(requested)
+	languages := make([]string, 0, 4)
 	if requested != "" {
 		languages = append(languages, requested)
 	}
-	if baseLanguage(requested) != "en" {
+	// TMDB matches a regional tag's country too, so "fr-CA" alone leaves out
+	// French posters tagged for France, the primary poster among them.
+	if base != "" && base != requested {
+		languages = append(languages, base)
+	}
+	if base != "en" {
 		languages = append(languages, "en")
 	}
 	languages = append(languages, "null")

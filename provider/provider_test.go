@@ -197,8 +197,8 @@ func TestTMDBLocalizedRequestsUseEnglishUSForEnglish(t *testing.T) {
 						t.Fatalf("language = %q, want en-US", got)
 					}
 					if tt.expectImageLang {
-						if got := r.URL.Query().Get("include_image_language"); got != "en-US,null" {
-							t.Fatalf("include_image_language = %q, want en-US,null", got)
+						if got := r.URL.Query().Get("include_image_language"); got != "en-US,en,null" {
+							t.Fatalf("include_image_language = %q, want en-US,en,null", got)
 						}
 					}
 					_ = json.NewEncoder(w).Encode(tt.response)
@@ -932,6 +932,17 @@ func TestGetImagesFallsBackToEnglishArtwork(t *testing.T) {
 				ProviderIDs: map[string]string{"tmdb": "42"},
 				ContentType: "series",
 				Language:    "fr",
+			},
+		},
+		{
+			name:     "regional language",
+			path:     "/movie/42",
+			wantLang: "fr-CA,fr,en,null",
+			response: map[string]any{"id": 42, "images": map[string]any{}},
+			request: metadata.ImageRequest{
+				ProviderIDs: map[string]string{"tmdb": "42"},
+				ContentType: "movie",
+				Language:    "fr-CA",
 			},
 		},
 		{
