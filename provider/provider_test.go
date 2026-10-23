@@ -900,7 +900,7 @@ func TestGetImagesKeepsSeasonGalleryWhenSeasonLookupFails(t *testing.T) {
 	}
 }
 
-func TestGetImagesScopesEnglishFallbackToSeasonGalleries(t *testing.T) {
+func TestGetImagesFallsBackToEnglishArtwork(t *testing.T) {
 	t.Parallel()
 
 	seasonThree := 3
@@ -915,7 +915,7 @@ func TestGetImagesScopesEnglishFallbackToSeasonGalleries(t *testing.T) {
 		{
 			name:     "movie",
 			path:     "/movie/42",
-			wantLang: "fr,null",
+			wantLang: "fr,en,null",
 			response: map[string]any{"id": 42, "images": map[string]any{}},
 			request: metadata.ImageRequest{
 				ProviderIDs: map[string]string{"tmdb": "42"},
@@ -926,7 +926,7 @@ func TestGetImagesScopesEnglishFallbackToSeasonGalleries(t *testing.T) {
 		{
 			name:     "series",
 			path:     "/tv/42",
-			wantLang: "fr,null",
+			wantLang: "fr,en,null",
 			response: map[string]any{"id": 42, "images": map[string]any{}},
 			request: metadata.ImageRequest{
 				ProviderIDs: map[string]string{"tmdb": "42"},
@@ -1149,7 +1149,7 @@ func TestGetImagesAddsPrimaryPosterWhenImagesMissIt(t *testing.T) {
 	images, err := p.GetImages(context.Background(), metadata.ImageRequest{
 		ProviderIDs: map[string]string{"tmdb": "42"},
 		ContentType: "movie",
-		Language:    "en",
+		Language:    "de",
 	})
 	if err != nil {
 		t.Fatalf("GetImages() error = %v", err)
@@ -1171,11 +1171,13 @@ func TestGetImagesAddsPrimaryPosterWhenImagesMissIt(t *testing.T) {
 	if alt == nil {
 		t.Fatal("alternate poster missing from GetImages() result")
 	}
-	if primary.Language != "en" {
-		t.Fatalf("primary language = %q, want en", primary.Language)
+	// The gallery already holds every German, English, and textless poster, so
+	// a primary missing from it is in another language and must not claim German.
+	if primary.Language != "" {
+		t.Fatalf("primary language = %q, want none", primary.Language)
 	}
 	if primary.IncludesText == nil || !*primary.IncludesText {
-		t.Fatalf("primary IncludesText = %v, want true for language-selected primary", primary.IncludesText)
+		t.Fatalf("primary IncludesText = %v, want true", primary.IncludesText)
 	}
 	if alt.IncludesText == nil || *alt.IncludesText {
 		t.Fatalf("alt IncludesText = %v, want false for language-neutral art", alt.IncludesText)
