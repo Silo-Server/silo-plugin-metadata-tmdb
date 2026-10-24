@@ -818,11 +818,17 @@ func imageLanguage(lang string) string {
 
 func tmdbImageLanguages(lang string) string {
 	requested := strings.TrimSpace(lang)
-	languages := make([]string, 0, 3)
+	base := baseLanguage(requested)
+	languages := make([]string, 0, 4)
 	if requested != "" {
 		languages = append(languages, requested)
 	}
-	if baseLanguage(requested) != "en" {
+	// TMDB matches a regional tag's country too, so "fr-CA" alone leaves out
+	// French posters tagged for France, the primary poster among them.
+	if base != "" && base != requested {
+		languages = append(languages, base)
+	}
+	if base != "en" {
 		languages = append(languages, "en")
 	}
 	languages = append(languages, "null")
@@ -863,14 +869,18 @@ func preferPrimaryImage(
 		return images
 	}
 
-	// TMDB picks poster_path for the requested language, so text presence for
-	// this synthesized record follows the same language heuristic.
+	// The gallery holds every requested-language, English, and language-neutral
+	// image, so a primary missing from it is in another language: TMDB falls
+	// back to the show's own poster, usually in its original language, when the
+	// requested language has none. Tagging it with the requested language would
+	// rank a foreign poster as a localized one, so it keeps no language and
+	// counts as text-bearing.
+	includesText := true
 	return append(images, metadata.RemoteImage{
 		URL:          primaryURL,
 		Type:         imageType,
-		Language:     language,
 		Rating:       bestRating + 1,
-		IncludesText: tmdbImageIncludesText(language),
+		IncludesText: &includesText,
 	})
 }
 
