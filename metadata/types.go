@@ -102,6 +102,9 @@ type MetadataResult struct {
 	// Series", "Ended", "Canceled", ...); the host normalizes spellings.
 	ShowStatus string
 	Videos     []VideoResult
+	// DigitalReleaseDate is a movie's earliest digital release (TMDB release
+	// type 4) in any country, YYYY-MM-DD.
+	DigitalReleaseDate string
 }
 
 // VideoResult carries a remote promotional/supplemental video (trailer,

@@ -241,8 +241,23 @@ func TestMetadataServerGetMetadata_IncludesReleaseDate(t *testing.T) {
 					"cast": []any{},
 					"crew": []any{},
 				},
+				// The earliest digital release (type 4) in any country wins,
+				// whatever comes earlier in another release type.
 				"release_dates": map[string]any{
-					"results": []any{},
+					"results": []any{
+						map[string]any{"iso_3166_1": "US", "release_dates": []any{
+							map[string]any{"type": 3, "release_date": "2024-01-02T00:00:00.000Z"},
+							map[string]any{"type": 4, "release_date": "2024-03-12T00:00:00.000Z"},
+						}},
+						map[string]any{"iso_3166_1": "GB", "release_dates": []any{
+							map[string]any{"type": 1, "release_date": "2023-09-01T00:00:00.000Z"},
+							map[string]any{"type": 4, "release_date": "2024-02-26T00:00:00.000Z"},
+							map[string]any{"type": 5, "release_date": "2024-02-01T00:00:00.000Z"},
+						}},
+						map[string]any{"iso_3166_1": "DE", "release_dates": []any{
+							map[string]any{"type": 4, "release_date": "not a date"},
+						}},
+					},
 				},
 			})
 		default:
@@ -270,6 +285,9 @@ func TestMetadataServerGetMetadata_IncludesReleaseDate(t *testing.T) {
 
 	if got := metadataItemReleaseDate(t, resp.GetItem()); got != "2024-01-02" {
 		t.Fatalf("release_date = %q, want 2024-01-02", got)
+	}
+	if got := resp.GetItem().GetMetadata().GetFields()["digital_release_date"].GetStringValue(); got != "2024-02-26" {
+		t.Fatalf("metadata digital_release_date = %q, want 2024-02-26", got)
 	}
 }
 
