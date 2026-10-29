@@ -650,10 +650,13 @@ func metadataStruct(result *metadata.MetadataResult) *structpb.Struct {
 			values["keywords"] = keywords
 		}
 	}
-	// Hosts list a movie on the calendar on the earlier of release_date and
-	// this date; older hosts ignore the key.
+	// Hosts list a movie on the calendar on the earlier of its home release
+	// dates; older hosts ignore the keys.
 	if result.DigitalReleaseDate != "" {
 		values["digital_release_date"] = result.DigitalReleaseDate
+	}
+	if result.PhysicalReleaseDate != "" {
+		values["physical_release_date"] = result.PhysicalReleaseDate
 	}
 	return structFromMap(values)
 }

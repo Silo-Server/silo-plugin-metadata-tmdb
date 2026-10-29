@@ -241,8 +241,8 @@ func TestMetadataServerGetMetadata_IncludesReleaseDate(t *testing.T) {
 					"cast": []any{},
 					"crew": []any{},
 				},
-				// The earliest digital release (type 4) in any country wins,
-				// whatever comes earlier in another release type.
+				// The earliest digital (type 4) and physical (type 5) releases
+				// in any country win, whatever comes earlier in another type.
 				"release_dates": map[string]any{
 					"results": []any{
 						map[string]any{"iso_3166_1": "US", "release_dates": []any{
@@ -256,6 +256,7 @@ func TestMetadataServerGetMetadata_IncludesReleaseDate(t *testing.T) {
 						}},
 						map[string]any{"iso_3166_1": "DE", "release_dates": []any{
 							map[string]any{"type": 4, "release_date": "not a date"},
+							map[string]any{"type": 5, "release_date": "2024-04-02T00:00:00.000Z"},
 						}},
 					},
 				},
@@ -288,6 +289,9 @@ func TestMetadataServerGetMetadata_IncludesReleaseDate(t *testing.T) {
 	}
 	if got := resp.GetItem().GetMetadata().GetFields()["digital_release_date"].GetStringValue(); got != "2024-02-26" {
 		t.Fatalf("metadata digital_release_date = %q, want 2024-02-26", got)
+	}
+	if got := resp.GetItem().GetMetadata().GetFields()["physical_release_date"].GetStringValue(); got != "2024-02-01" {
+		t.Fatalf("metadata physical_release_date = %q, want 2024-02-01", got)
 	}
 }
 
