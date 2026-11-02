@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/Silo-Server/silo-plugin-tmdb/metadata"
@@ -514,6 +515,8 @@ func (p *Provider) getMovieMetadata(ctx context.Context, id int, lang string) (*
 		Year:                 extractYear(movie.ReleaseDate),
 		ReleaseDate:          movie.ReleaseDate,
 		ContentRating:        movieContentRating(movie.ReleaseDates),
+		DigitalReleaseDate:   earliestRelease(movie.ReleaseDates, releaseTypeDigital),
+		PhysicalReleaseDate:  earliestRelease(movie.ReleaseDates, releaseTypePhysical),
 		ProviderIDs:          map[string]string{"tmdb": strconv.Itoa(movie.ID)},
 	}
 
@@ -1077,6 +1080,38 @@ func movieContentRating(rd *ReleaseDatesWrapper) string {
 		}
 	}
 	return ""
+}
+
+// TMDB release types for home releases: digital (streaming or purchase) and
+// physical (disc).
+const (
+	releaseTypeDigital  = 4
+	releaseTypePhysical = 5
+)
+
+// earliestRelease returns the earliest date of one release type across all
+// countries as YYYY-MM-DD, or "" when TMDB lists none. TMDB reports each date
+// as a midnight-UTC timestamp, so the date part is the release day.
+func earliestRelease(rd *ReleaseDatesWrapper, releaseType int) string {
+	if rd == nil {
+		return ""
+	}
+	earliest := ""
+	for _, country := range rd.Results {
+		for _, entry := range country.ReleaseDates {
+			if entry.Type != releaseType || len(entry.ReleaseDate) < len(time.DateOnly) {
+				continue
+			}
+			day := entry.ReleaseDate[:len(time.DateOnly)]
+			if _, err := time.Parse(time.DateOnly, day); err != nil {
+				continue
+			}
+			if earliest == "" || day < earliest {
+				earliest = day
+			}
+		}
+	}
+	return earliest
 }
 
 func tvContentRating(cr *ContentRatingsWrapper) string {
