@@ -255,7 +255,8 @@ func TestMetadataServerGetMetadata_IncludesReleaseDate(t *testing.T) {
 							map[string]any{"type": 5, "release_date": "2024-02-01T00:00:00.000Z"},
 						}},
 						map[string]any{"iso_3166_1": "DE", "release_dates": []any{
-							map[string]any{"type": 4, "release_date": "not a date"},
+							// Sorts first but doesn't parse, so it must be skipped.
+							map[string]any{"type": 4, "release_date": "2023-13-01T00:00:00.000Z"},
 							map[string]any{"type": 5, "release_date": "2024-04-02T00:00:00.000Z"},
 						}},
 					},
