@@ -85,8 +85,11 @@ gh attestation verify plugin-linux-amd64 \
 ```
 
 This is the check Silo servers apply: the shared release workflow on its
-`main` branch built the binary from that tag of this repository. To verify
-offline against the bundle shipped with the release, add
-`--bundle plugin.sigstore.json`. Verify before running a downloaded binary.
+`main` branch built the binary from that tag of this repository. To check
+against the bundle shipped with the release instead of fetching the attestation
+from GitHub, add `--bundle plugin.sigstore.json`; `gh` still fetches Sigstore's
+trusted root unless you follow GitHub's
+[offline verification steps](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/verify-attestations-offline).
+Verify before running a downloaded binary.
 `sha256sum plugin-linux-amd64` must also match the binary's line in
 `checksums.txt`.
