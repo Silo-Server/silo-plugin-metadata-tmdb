@@ -1,6 +1,6 @@
 {
   "plugin_id": "silo.tmdb",
-  "version": "1.2.30",
+  "version": "1.2.31",
   "checksum": "__CHECKSUM__",
   "silo_api_version": "v1",
   "presentation": {
@@ -19,6 +19,14 @@
   "supported_platforms": [
     {
       "os": "darwin",
+      "arch": "arm64"
+    },
+    {
+      "os": "freebsd",
+      "arch": "amd64"
+    },
+    {
+      "os": "freebsd",
       "arch": "arm64"
     },
     {
