@@ -169,6 +169,8 @@ type SeasonsRequest struct {
 	ProviderIDs map[string]string
 	ContentType string
 	Language    string
+	// Ordering is an EpisodeOrder.ID; empty means the default order.
+	Ordering string
 }
 
 // EpisodesRequest is passed to EpisodeProvider.GetEpisodes().
@@ -176,6 +178,28 @@ type EpisodesRequest struct {
 	ProviderIDs  map[string]string
 	SeasonNumber int
 	Language     string
+	// Ordering is an EpisodeOrder.ID; empty means the default order.
+	// SeasonNumber is then a season of that order.
+	Ordering string
+}
+
+// EpisodeOrdersRequest is passed to EpisodeProvider.ListEpisodeOrders().
+type EpisodeOrdersRequest struct {
+	ProviderIDs map[string]string
+	Language    string
+}
+
+// EpisodeOrder is one way a provider arranges a series' episodes into seasons.
+// Kind uses the SDK's open vocabulary (aired, dvd, absolute, digital,
+// story_arc, production, tv, alternate).
+type EpisodeOrder struct {
+	ID           string
+	Name         string
+	Kind         string
+	Description  string
+	SeasonCount  int
+	EpisodeCount int
+	IsDefault    bool
 }
 
 // SeasonResult carries season data from a provider.
@@ -201,6 +225,13 @@ type EpisodeResult struct {
 	Runtime       int
 	Ratings       Ratings
 	StillPath     string
+	// AbsoluteNumber is the episode's position through the whole series,
+	// specials excluded, when the order defines one.
+	AbsoluteNumber *int
+	// DefaultSeasonNumber and DefaultEpisodeNumber are the episode's
+	// coordinates in the default order, set when another order was served.
+	DefaultSeasonNumber  *int
+	DefaultEpisodeNumber *int
 }
 
 // NormalizeOriginalLanguage lowercases and trims whitespace from a language code.

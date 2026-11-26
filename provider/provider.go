@@ -129,17 +129,18 @@ const maxCast = 20
 // Provider implements SearchProvider, MetadataProvider, ImageProvider,
 // and EpisodeProvider for the TMDB v3 API.
 type Provider struct {
-	client *Client
+	client        *Client
+	episodeGroups *episodeGroupCache
 }
 
 // NewProvider creates a TMDB provider using the built-in project API key.
 func NewProvider() *Provider {
-	return &Provider{client: NewClient(40)}
+	return NewProviderWithClient(NewClient(40))
 }
 
 // NewProviderWithClient creates a TMDB provider with a pre-configured client.
 func NewProviderWithClient(c *Client) *Provider {
-	return &Provider{client: c}
+	return &Provider{client: c, episodeGroups: newEpisodeGroupCache()}
 }
 
 func (p *Provider) Slug() string       { return "tmdb" }
@@ -749,6 +750,9 @@ func (p *Provider) GetSeasons(ctx context.Context, req metadata.SeasonsRequest) 
 	if err != nil {
 		return nil, fmt.Errorf("tmdb: invalid TMDB ID: %w", err)
 	}
+	if !isDefaultOrdering(req.Ordering) {
+		return p.getOrderedSeasons(ctx, req)
+	}
 
 	lang := tmdbLanguage(req.Language)
 	tv, err := p.client.GetTV(ctx, id, lang)
@@ -780,6 +784,9 @@ func (p *Provider) GetEpisodes(ctx context.Context, req metadata.EpisodesRequest
 	id, err := strconv.Atoi(tmdbID)
 	if err != nil {
 		return nil, fmt.Errorf("tmdb: invalid TMDB ID: %w", err)
+	}
+	if !isDefaultOrdering(req.Ordering) {
+		return p.getOrderedEpisodes(ctx, req)
 	}
 
 	lang := tmdbLanguage(req.Language)

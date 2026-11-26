@@ -456,3 +456,57 @@ type apiError struct {
 	StatusMessage string `json:"status_message"`
 	StatusCode    int    `json:"status_code"`
 }
+
+// ---------------------------------------------------------------------------
+// Episode groups (alternative episode orders)
+// ---------------------------------------------------------------------------
+
+// EpisodeGroupList is the result of /tv/{id}/episode_groups.
+type EpisodeGroupList struct {
+	ID      int                   `json:"id"`
+	Results []EpisodeGroupSummary `json:"results"`
+}
+
+// EpisodeGroupSummary is one episode group of a series, without its episodes.
+type EpisodeGroupSummary struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Type         int    `json:"type"`
+	GroupCount   int    `json:"group_count"`
+	EpisodeCount int    `json:"episode_count"`
+	Description  string `json:"description"`
+}
+
+// EpisodeGroupDetail is the result of /tv/episode_group/{id}: one episode
+// order of a series, split into groups that act as its seasons.
+type EpisodeGroupDetail struct {
+	ID     string         `json:"id"`
+	Name   string         `json:"name"`
+	Type   int            `json:"type"`
+	Groups []EpisodeGroup `json:"groups"`
+}
+
+// EpisodeGroup is one season-like group of an episode group. Order is TMDB's
+// zero-based position of the group within the episode group.
+type EpisodeGroup struct {
+	ID       string                `json:"id"`
+	Name     string                `json:"name"`
+	Order    int                   `json:"order"`
+	Episodes []EpisodeGroupEpisode `json:"episodes"`
+}
+
+// EpisodeGroupEpisode is an episode inside an episode group. SeasonNumber and
+// EpisodeNumber are its coordinates in TMDB's default order; Order is its
+// zero-based position within the group.
+type EpisodeGroupEpisode struct {
+	ID            int     `json:"id"`
+	Name          string  `json:"name"`
+	Overview      string  `json:"overview"`
+	AirDate       string  `json:"air_date"`
+	StillPath     string  `json:"still_path"`
+	Runtime       int     `json:"runtime"`
+	SeasonNumber  int     `json:"season_number"`
+	EpisodeNumber int     `json:"episode_number"`
+	Order         int     `json:"order"`
+	VoteAverage   float64 `json:"vote_average"`
+}
