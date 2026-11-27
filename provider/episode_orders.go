@@ -190,14 +190,47 @@ func (p *Provider) episodeGroup(ctx context.Context, showID int, ordering, lang 
 		p.episodeGroups.put(key, fetched)
 		detail = fetched
 	}
+	owned := false
 	for _, group := range detail.Groups {
 		for _, episode := range group.Episodes {
 			if episode.ShowID != 0 && episode.ShowID != showID {
 				return nil, fmt.Errorf("%w %q: it belongs to another show", ErrUnknownOrdering, ordering)
 			}
+			owned = owned || episode.ShowID == showID
+		}
+	}
+	if !owned {
+		// No episode names its show: the show's own list of groups decides.
+		listed, err := p.showListsEpisodeGroup(ctx, showID, ordering)
+		if err != nil {
+			return nil, err
+		}
+		if !listed {
+			return nil, fmt.Errorf("%w %q: not an episode group of this show", ErrUnknownOrdering, ordering)
 		}
 	}
 	return detail, nil
+}
+
+// showListsEpisodeGroup reports whether showID's episode groups include
+// ordering. A confirmation is cached with the group, so the seasons of one
+// order ask TMDB once.
+func (p *Provider) showListsEpisodeGroup(ctx context.Context, showID int, ordering string) (bool, error) {
+	key := fmt.Sprintf("owner|%s|%d", ordering, showID)
+	if p.episodeGroups.get(key) != nil {
+		return true, nil
+	}
+	groups, err := p.client.GetEpisodeGroups(ctx, showID)
+	if err != nil {
+		return false, err
+	}
+	for _, group := range groups.Results {
+		if group.ID == ordering {
+			p.episodeGroups.put(key, &EpisodeGroupDetail{ID: ordering})
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (p *Provider) getOrderedSeasons(ctx context.Context, showID int, req metadata.SeasonsRequest) ([]metadata.SeasonResult, error) {
@@ -256,15 +289,20 @@ func (p *Provider) getOrderedEpisodes(ctx context.Context, showID int, req metad
 	return nil, nil
 }
 
+// earliestAirDate is the earliest valid YYYY-MM-DD air date of episodes;
+// malformed dates are skipped.
 func earliestAirDate(episodes []EpisodeGroupEpisode) string {
-	earliest := ""
+	var earliest time.Time
 	for _, episode := range episodes {
-		// TMDB air dates are YYYY-MM-DD, so string order is date order.
-		if episode.AirDate != "" && (earliest == "" || episode.AirDate < earliest) {
-			earliest = episode.AirDate
+		date, err := time.Parse(time.DateOnly, episode.AirDate)
+		if err == nil && (earliest.IsZero() || date.Before(earliest)) {
+			earliest = date
 		}
 	}
-	return earliest
+	if earliest.IsZero() {
+		return ""
+	}
+	return earliest.Format(time.DateOnly)
 }
 
 func intPtr(value int) *int { return &value }

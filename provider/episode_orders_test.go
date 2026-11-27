@@ -88,7 +88,7 @@ const (
 				"name": "Volume 1",
 				"order": 1,
 				"episodes": [
-					{"show_id": 1399, "id": 1002, "name": "The Second", "air_date": "2020-01-08", "season_number": 1, "episode_number": 2, "order": 1},
+					{"show_id": 1399, "id": 1002, "name": "The Second", "air_date": "2019-13-01", "season_number": 1, "episode_number": 2, "order": 1},
 					{"show_id": 1399, "id": 1001, "name": "Pilot", "air_date": "2020-01-01", "season_number": 1, "episode_number": 1, "order": 0}
 				]
 			}
@@ -145,6 +145,7 @@ const (
 type episodeOrdersFixture struct {
 	server       *httptest.Server
 	groupFetches atomic.Int32
+	listFetches  atomic.Int32
 }
 
 func newEpisodeOrdersFixture(t *testing.T) (*Provider, *episodeOrdersFixture) {
@@ -159,7 +160,10 @@ func newEpisodeOrdersFixture(t *testing.T) (*Provider, *episodeOrdersFixture) {
 		case "/tv/1399":
 			body = episodeOrdersTVFixture
 		case "/tv/1399/episode_groups":
+			fixture.listFetches.Add(1)
 			body = episodeGroupsListFixture
+		case "/tv/4242/episode_groups":
+			body = `{"id": 4242, "results": []}`
 		case "/tv/1399/season/1":
 			body = defaultSeasonFixture
 		case "/tv/episode_group/5b11ba820e0a265847002c6e":
@@ -328,6 +332,28 @@ func TestEpisodeOrderingGroupOfAnotherShowIsErrUnknownOrdering(t *testing.T) {
 	}
 	if _, err := p.GetEpisodes(context.Background(), metadata.EpisodesRequest{ProviderIDs: ids, SeasonNumber: 1, Ordering: dvd}); !errors.Is(err, ErrUnknownOrdering) {
 		t.Fatalf("GetEpisodes() error = %v, want ErrUnknownOrdering", err)
+	}
+}
+
+// A group whose episodes carry no show_id is checked against the show's own
+// list of episode groups, once per group and show.
+func TestEpisodeOrderingGroupWithoutShowIDsIsCheckedAgainstTheShow(t *testing.T) {
+	t.Parallel()
+	p, fixture := newEpisodeOrdersFixture(t)
+	const absolute = "5e0b6c0a9f0e19001352a9c4"
+
+	other := map[string]string{"tmdb": "4242"}
+	if _, err := p.GetSeasons(context.Background(), metadata.SeasonsRequest{ProviderIDs: other, Ordering: absolute}); !errors.Is(err, ErrUnknownOrdering) {
+		t.Fatalf("GetSeasons(another show) error = %v, want ErrUnknownOrdering", err)
+	}
+	own := map[string]string{"tmdb": "1399"}
+	for season := 1; season <= 2; season++ {
+		if _, err := p.GetEpisodes(context.Background(), metadata.EpisodesRequest{ProviderIDs: own, SeasonNumber: season, Ordering: absolute}); err != nil {
+			t.Fatalf("GetEpisodes(own show, %d) error = %v", season, err)
+		}
+	}
+	if got := fixture.listFetches.Load(); got != 1 {
+		t.Fatalf("episode group list fetched %d times, want 1", got)
 	}
 }
 
