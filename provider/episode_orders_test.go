@@ -71,8 +71,8 @@ const (
 				"order": 2,
 				"locked": true,
 				"episodes": [
-					{"id": 1003, "name": "The Third", "overview": "Third aired.", "air_date": "2020-01-15", "still_path": "/s1e3.jpg", "runtime": 50, "season_number": 1, "episode_number": 3, "order": 1, "vote_average": 7.5},
-					{"id": 2001, "name": "Second Season Opener", "overview": "", "air_date": "2021-01-01", "still_path": "/s2e1.jpg", "runtime": 55, "season_number": 2, "episode_number": 1, "order": 0}
+					{"show_id": 1399, "id": 1003, "name": "The Third", "overview": "Third aired.", "air_date": "2020-01-15", "still_path": "/s1e3.jpg", "runtime": 50, "season_number": 1, "episode_number": 3, "order": 1, "vote_average": 7.5},
+					{"show_id": 1399, "id": 2001, "name": "Second Season Opener", "overview": "", "air_date": "2021-01-01", "still_path": "/s2e1.jpg", "runtime": 55, "season_number": 2, "episode_number": 1, "order": 0}
 				]
 			},
 			{
@@ -80,7 +80,7 @@ const (
 				"name": "Bonus Disc",
 				"order": 0,
 				"episodes": [
-					{"id": 9001, "name": "Behind the Scenes", "air_date": "2019-12-01", "season_number": 0, "episode_number": 1, "order": 0}
+					{"show_id": 1399, "id": 9001, "name": "Behind the Scenes", "air_date": "2019-12-01", "season_number": 0, "episode_number": 1, "order": 0}
 				]
 			},
 			{
@@ -88,8 +88,8 @@ const (
 				"name": "Volume 1",
 				"order": 1,
 				"episodes": [
-					{"id": 1002, "name": "The Second", "air_date": "2020-01-08", "season_number": 1, "episode_number": 2, "order": 1},
-					{"id": 1001, "name": "Pilot", "air_date": "2020-01-01", "season_number": 1, "episode_number": 1, "order": 0}
+					{"show_id": 1399, "id": 1002, "name": "The Second", "air_date": "2020-01-08", "season_number": 1, "episode_number": 2, "order": 1},
+					{"show_id": 1399, "id": 1001, "name": "Pilot", "air_date": "2020-01-01", "season_number": 1, "episode_number": 1, "order": 0}
 				]
 			}
 		]
@@ -193,7 +193,8 @@ func TestListEpisodeOrdersReturnsDefaultAndEpisodeGroups(t *testing.T) {
 		t.Fatalf("ListEpisodeOrders() error = %v", err)
 	}
 	want := []metadata.EpisodeOrder{
-		{ID: "default", Name: "Aired order", Kind: "aired", SeasonCount: 3, EpisodeCount: 20, IsDefault: true},
+		// Regular seasons only, as the host shows them: Specials do not count.
+		{ID: "default", Name: "Aired order", Kind: "aired", SeasonCount: 2, EpisodeCount: 18, IsDefault: true},
 		{ID: "5b11ba820e0a265847002c6e", Name: "DVD Order", Kind: "dvd", Description: "Episodes as released on DVD.", SeasonCount: 3, EpisodeCount: 5},
 		{ID: "5e0b6c0a9f0e19001352a9c4", Name: "Absolute Order", Kind: "absolute", SeasonCount: 3, EpisodeCount: 6},
 		{ID: "5f0000000000000000000001", Name: "Story Arcs", Kind: "story_arc", Description: "Grouped by story arc.", SeasonCount: 4, EpisodeCount: 18},
@@ -311,6 +312,22 @@ func TestGetEpisodesAbsoluteGroupSetsAbsoluteNumbersAndNamedSpecials(t *testing.
 	// Season 0 episodes have no absolute number, even the regular-season recap.
 	if got, want := collect(0), []coords{{1010, 0, 1, 10}, {9001, 0, 0, 1}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("season 0 = %v, want %v", got, want)
+	}
+}
+
+// An episode group of another show (an order saved before the series was
+// rematched) is not an ordering of this series.
+func TestEpisodeOrderingGroupOfAnotherShowIsErrUnknownOrdering(t *testing.T) {
+	t.Parallel()
+	p, _ := newEpisodeOrdersFixture(t)
+	ids := map[string]string{"tmdb": "4242"}
+	const dvd = "5b11ba820e0a265847002c6e"
+
+	if _, err := p.GetSeasons(context.Background(), metadata.SeasonsRequest{ProviderIDs: ids, Ordering: dvd}); !errors.Is(err, ErrUnknownOrdering) {
+		t.Fatalf("GetSeasons() error = %v, want ErrUnknownOrdering", err)
+	}
+	if _, err := p.GetEpisodes(context.Background(), metadata.EpisodesRequest{ProviderIDs: ids, SeasonNumber: 1, Ordering: dvd}); !errors.Is(err, ErrUnknownOrdering) {
+		t.Fatalf("GetEpisodes() error = %v, want ErrUnknownOrdering", err)
 	}
 }
 

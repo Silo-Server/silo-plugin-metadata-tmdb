@@ -499,7 +499,9 @@ type EpisodeGroup struct {
 // EpisodeNumber are its coordinates in TMDB's default order; Order is its
 // zero-based position within the group.
 type EpisodeGroupEpisode struct {
-	ID            int     `json:"id"`
+	ID int `json:"id"`
+	// ShowID is the series the episode belongs to.
+	ShowID        int     `json:"show_id"`
 	Name          string  `json:"name"`
 	Overview      string  `json:"overview"`
 	AirDate       string  `json:"air_date"`

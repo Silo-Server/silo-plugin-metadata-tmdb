@@ -68,14 +68,17 @@ func (p *Provider) ListEpisodeOrders(ctx context.Context, req metadata.EpisodeOr
 	}
 
 	defaultOrder := metadata.EpisodeOrder{
-		ID:          DefaultEpisodeOrderID,
-		Name:        "Aired order",
-		Kind:        "aired",
-		SeasonCount: len(tv.Seasons),
-		IsDefault:   true,
+		ID:        DefaultEpisodeOrderID,
+		Name:      "Aired order",
+		Kind:      "aired",
+		IsDefault: true,
 	}
+	// Regular seasons only: Specials (season 0) are not part of the order.
 	for _, season := range tv.Seasons {
-		defaultOrder.EpisodeCount += season.EpisodeCount
+		if season.SeasonNumber > 0 {
+			defaultOrder.SeasonCount++
+			defaultOrder.EpisodeCount += season.EpisodeCount
+		}
 	}
 
 	orders := make([]metadata.EpisodeOrder, 0, len(groups.Results)+1)
@@ -170,25 +173,35 @@ func isSpecialsGroup(name string, episodes []EpisodeGroupEpisode) bool {
 
 // episodeGroup returns the episode group behind ordering, from the cache when
 // it was fetched recently. GetSeasons and then GetEpisodes for each season all
-// read the same group, so the cache saves one TMDB request per season.
-func (p *Provider) episodeGroup(ctx context.Context, ordering, lang string) (*EpisodeGroupDetail, error) {
+// read the same group, so the cache saves one TMDB request per season. A
+// group of another show (an order saved before the series was rematched) is
+// not an ordering of the series showID.
+func (p *Provider) episodeGroup(ctx context.Context, showID int, ordering, lang string) (*EpisodeGroupDetail, error) {
 	key := ordering + "|" + lang
-	if detail := p.episodeGroups.get(key); detail != nil {
-		return detail, nil
-	}
-	detail, err := p.client.GetEpisodeGroup(ctx, ordering, lang)
-	if err != nil {
-		if isNotFound(err) {
-			return nil, fmt.Errorf("%w %q", ErrUnknownOrdering, ordering)
+	detail := p.episodeGroups.get(key)
+	if detail == nil {
+		fetched, err := p.client.GetEpisodeGroup(ctx, ordering, lang)
+		if err != nil {
+			if isNotFound(err) {
+				return nil, fmt.Errorf("%w %q", ErrUnknownOrdering, ordering)
+			}
+			return nil, err
 		}
-		return nil, err
+		p.episodeGroups.put(key, fetched)
+		detail = fetched
 	}
-	p.episodeGroups.put(key, detail)
+	for _, group := range detail.Groups {
+		for _, episode := range group.Episodes {
+			if episode.ShowID != 0 && episode.ShowID != showID {
+				return nil, fmt.Errorf("%w %q: it belongs to another show", ErrUnknownOrdering, ordering)
+			}
+		}
+	}
 	return detail, nil
 }
 
-func (p *Provider) getOrderedSeasons(ctx context.Context, req metadata.SeasonsRequest) ([]metadata.SeasonResult, error) {
-	detail, err := p.episodeGroup(ctx, strings.TrimSpace(req.Ordering), tmdbLanguage(req.Language))
+func (p *Provider) getOrderedSeasons(ctx context.Context, showID int, req metadata.SeasonsRequest) ([]metadata.SeasonResult, error) {
+	detail, err := p.episodeGroup(ctx, showID, strings.TrimSpace(req.Ordering), tmdbLanguage(req.Language))
 	if err != nil {
 		return nil, err
 	}
@@ -205,8 +218,8 @@ func (p *Provider) getOrderedSeasons(ctx context.Context, req metadata.SeasonsRe
 	return seasons, nil
 }
 
-func (p *Provider) getOrderedEpisodes(ctx context.Context, req metadata.EpisodesRequest) ([]metadata.EpisodeResult, error) {
-	detail, err := p.episodeGroup(ctx, strings.TrimSpace(req.Ordering), tmdbLanguage(req.Language))
+func (p *Provider) getOrderedEpisodes(ctx context.Context, showID int, req metadata.EpisodesRequest) ([]metadata.EpisodeResult, error) {
+	detail, err := p.episodeGroup(ctx, showID, strings.TrimSpace(req.Ordering), tmdbLanguage(req.Language))
 	if err != nil {
 		return nil, err
 	}

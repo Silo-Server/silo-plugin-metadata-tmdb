@@ -751,7 +751,7 @@ func (p *Provider) GetSeasons(ctx context.Context, req metadata.SeasonsRequest) 
 		return nil, fmt.Errorf("tmdb: invalid TMDB ID: %w", err)
 	}
 	if !isDefaultOrdering(req.Ordering) {
-		return p.getOrderedSeasons(ctx, req)
+		return p.getOrderedSeasons(ctx, id, req)
 	}
 
 	lang := tmdbLanguage(req.Language)
@@ -786,7 +786,7 @@ func (p *Provider) GetEpisodes(ctx context.Context, req metadata.EpisodesRequest
 		return nil, fmt.Errorf("tmdb: invalid TMDB ID: %w", err)
 	}
 	if !isDefaultOrdering(req.Ordering) {
-		return p.getOrderedEpisodes(ctx, req)
+		return p.getOrderedEpisodes(ctx, id, req)
 	}
 
 	lang := tmdbLanguage(req.Language)
