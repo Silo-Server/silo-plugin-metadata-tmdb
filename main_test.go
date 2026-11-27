@@ -11,26 +11,11 @@ import (
 	pluginv1 "github.com/Silo-Server/silo-plugin-sdk/pkg/pluginproto/silo/plugin/v1"
 	"github.com/Silo-Server/silo-plugin-tmdb/metadata"
 	"github.com/Silo-Server/silo-plugin-tmdb/provider"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 )
-
-func TestRuntimeServerConfigure_NoOp(t *testing.T) {
-	server := &runtimeServer{provider: provider.NewProvider()}
-
-	_, err := server.Configure(context.Background(), &pluginv1.ConfigureRequest{})
-	if err != nil {
-		t.Fatalf("Configure() returned error: %v", err)
-	}
-
-	p, err := server.providerForRequest()
-	if err != nil {
-		t.Fatalf("providerForRequest() returned error: %v", err)
-	}
-	if p == nil {
-		t.Fatal("expected provider to be available")
-	}
-}
 
 func TestImageRecordMetadataIncludesArtworkTextSignal(t *testing.T) {
 	includesText := false
@@ -678,4 +663,71 @@ func TestMetadataServer_SendsTMDBVotesForMoviesAndSeriesOnly(t *testing.T) {
 			t.Fatalf("episode ratings = %v, want %v", got, want)
 		}
 	})
+}
+
+func TestMetadataServerEpisodeOrders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/configuration":
+			_, _ = w.Write([]byte(`{"images": {"secure_base_url": "https://image.example/"}}`))
+		case "/tv/1399":
+			_, _ = w.Write([]byte(`{"id": 1399, "seasons": [{"season_number": 1, "episode_count": 2}]}`))
+		case "/tv/1399/episode_groups":
+			_, _ = w.Write([]byte(`{"results": [{"id": "abs1", "name": "Absolute Order", "type": 2, "group_count": 1, "episode_count": 2}]}`))
+		case "/tv/episode_group/abs1":
+			_, _ = w.Write([]byte(`{"id": "abs1", "type": 2, "groups": [{"id": "g1", "name": "Disc 1", "order": 0, "episodes": [
+				{"id": 1002, "name": "Two", "season_number": 1, "episode_number": 2, "order": 0},
+				{"id": 1001, "name": "One", "season_number": 1, "episode_number": 1, "order": 1}]}]}`))
+		case "/tv/episode_group/gone":
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"status_code": 34, "status_message": "The resource you requested could not be found."}`))
+		default:
+			t.Errorf("unexpected TMDB request: %s", r.URL.String())
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client := provider.NewClient(1000)
+	client.SetBaseURL(server.URL)
+	ms := &metadataServer{runtime: &runtimeServer{provider: provider.NewProviderWithClient(client)}}
+	ctx := context.Background()
+
+	list, err := ms.ListEpisodeOrders(ctx, &pluginv1.ListEpisodeOrdersRequest{SeriesProviderId: "1399"})
+	if err != nil {
+		t.Fatalf("ListEpisodeOrders() error = %v", err)
+	}
+	wantOrders := []*pluginv1.EpisodeOrder{
+		{Id: "default", Name: "Aired order", Kind: "aired", SeasonCount: 1, EpisodeCount: 2, IsDefault: true},
+		{Id: "abs1", Name: "Absolute Order", Kind: "absolute", SeasonCount: 1, EpisodeCount: 2},
+	}
+	if !proto.Equal(&pluginv1.ListEpisodeOrdersResponse{Orders: wantOrders}, list) {
+		t.Fatalf("ListEpisodeOrders() = %v", list)
+	}
+
+	seasons, err := ms.GetSeasons(ctx, &pluginv1.GetSeasonsRequest{SeriesProviderId: "1399", Ordering: "abs1"})
+	if err != nil {
+		t.Fatalf("GetSeasons() error = %v", err)
+	}
+	if len(seasons.GetSeasons()) != 1 || seasons.GetSeasons()[0].GetTitle() != "Disc 1" {
+		t.Fatalf("GetSeasons() = %v, want the Disc 1 group", seasons)
+	}
+
+	episodes, err := ms.GetEpisodes(ctx, &pluginv1.GetEpisodesRequest{SeriesProviderId: "1399", SeasonNumber: 1, Ordering: "abs1"})
+	if err != nil {
+		t.Fatalf("GetEpisodes() error = %v", err)
+	}
+	first := episodes.GetEpisodes()[0]
+	if first.GetProviderIds().GetFields()["tmdb"].GetStringValue() != "1002" || first.GetEpisodeNumber() != 1 ||
+		first.DefaultSeasonNumber == nil || first.GetDefaultSeasonNumber() != 1 || first.GetDefaultEpisodeNumber() != 2 ||
+		first.AbsoluteNumber == nil || first.GetAbsoluteNumber() != 1 {
+		t.Fatalf("GetEpisodes()[0] = %v, want TMDB 1002 as E1 with default S1E2 and absolute 1", first)
+	}
+
+	if _, err := ms.GetSeasons(ctx, &pluginv1.GetSeasonsRequest{SeriesProviderId: "1399", Ordering: "gone"}); status.Code(err) != codes.NotFound {
+		t.Fatalf("GetSeasons(unknown ordering) error = %v, want NOT_FOUND", err)
+	}
+	if _, err := ms.GetEpisodes(ctx, &pluginv1.GetEpisodesRequest{SeriesProviderId: "1399", SeasonNumber: 1, Ordering: "gone"}); status.Code(err) != codes.NotFound {
+		t.Fatalf("GetEpisodes(unknown ordering) error = %v, want NOT_FOUND", err)
+	}
 }

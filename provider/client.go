@@ -30,6 +30,26 @@ const (
 // a series filed as one long season is the first to reach it.
 var errResponseTooLarge = errors.New("tmdb: response too large")
 
+// httpStatusError is a 4xx answer from TMDB. Message is TMDB's
+// status_message, empty when the body carried none.
+type httpStatusError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *httpStatusError) Error() string {
+	if e.Message != "" {
+		return fmt.Sprintf("tmdb: HTTP %d: %s", e.StatusCode, e.Message)
+	}
+	return fmt.Sprintf("tmdb: HTTP %d", e.StatusCode)
+}
+
+// isNotFound reports whether err is TMDB answering 404.
+func isNotFound(err error) bool {
+	var statusErr *httpStatusError
+	return errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotFound
+}
+
 // Client is an HTTP client for the TMDB v3 API.
 type Client struct {
 	httpClient *http.Client
@@ -159,11 +179,12 @@ func (c *Client) doGet(ctx context.Context, path string, dest any) error {
 		if resp.StatusCode >= 400 {
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
 			resp.Body.Close()
+			statusErr := &httpStatusError{StatusCode: resp.StatusCode}
 			var apiErr apiError
-			if err := json.Unmarshal(body, &apiErr); err == nil && apiErr.StatusMessage != "" {
-				return fmt.Errorf("tmdb: HTTP %d: %s", resp.StatusCode, apiErr.StatusMessage)
+			if err := json.Unmarshal(body, &apiErr); err == nil {
+				statusErr.Message = apiErr.StatusMessage
 			}
-			return fmt.Errorf("tmdb: HTTP %d", resp.StatusCode)
+			return statusErr
 		}
 
 		// 2xx — decode response.
@@ -565,4 +586,24 @@ func (c *Client) GetSeason(ctx context.Context, tvID, seasonNumber int, lang str
 		return nil, err
 	}
 	return &season, nil
+}
+
+// GetEpisodeGroups lists the episode groups (alternative episode orders) of a
+// TV series.
+func (c *Client) GetEpisodeGroups(ctx context.Context, tvID int) (*EpisodeGroupList, error) {
+	var groups EpisodeGroupList
+	if err := c.doGet(ctx, fmt.Sprintf("/tv/%d/episode_groups", tvID), &groups); err != nil {
+		return nil, err
+	}
+	return &groups, nil
+}
+
+// GetEpisodeGroup fetches one episode group with all its groups and episodes.
+func (c *Client) GetEpisodeGroup(ctx context.Context, groupID, lang string) (*EpisodeGroupDetail, error) {
+	path := fmt.Sprintf("/tv/episode_group/%s?language=%s", url.PathEscape(groupID), url.QueryEscape(lang))
+	var group EpisodeGroupDetail
+	if err := c.doGet(ctx, path, &group); err != nil {
+		return nil, err
+	}
+	return &group, nil
 }

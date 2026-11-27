@@ -50,7 +50,8 @@
           "series": 3,
           "season": 3,
           "episode": 3
-        }
+        },
+        "episode_orders": true
       }
     },
     {

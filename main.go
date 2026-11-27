@@ -2,18 +2,16 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	_ "embed"
-	"encoding/hex"
-	"fmt"
+	"errors"
 	"math"
-	"os"
 	"strings"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	pluginv1 "github.com/Silo-Server/silo-plugin-sdk/pkg/pluginproto/silo/plugin/v1"
-	publicmanifest "github.com/Silo-Server/silo-plugin-sdk/pkg/pluginsdk/manifest"
 	"github.com/Silo-Server/silo-plugin-sdk/pkg/pluginsdk/runtime"
 	"github.com/Silo-Server/silo-plugin-tmdb/metadata"
 	"github.com/Silo-Server/silo-plugin-tmdb/models"
@@ -23,29 +21,22 @@ import (
 // version is set at build time via -ldflags "-X main.version=...".
 var version string
 
+// runtimeServer holds the TMDB provider the capability servers share. The
+// Runtime service itself (GetManifest, a no-op Configure) is the SDK's, from
+// runtime.ServeManifestWithOptions.
 type runtimeServer struct {
-	pluginv1.UnimplementedRuntimeServer
-
-	manifest *pluginv1.PluginManifest
 	provider *provider.Provider
 }
 
 type metadataServer struct {
 	pluginv1.UnimplementedMetadataProviderServer
 	pluginv1.UnimplementedImageResolverServer
+	pluginv1.UnimplementedEpisodeOrdersServer
 	runtime *runtimeServer
 }
 
 //go:embed manifest.json
 var manifestJSON []byte
-
-func (s *runtimeServer) GetManifest(context.Context, *pluginv1.GetManifestRequest) (*pluginv1.GetManifestResponse, error) {
-	return &pluginv1.GetManifestResponse{Manifest: s.manifest}, nil
-}
-
-func (s *runtimeServer) Configure(_ context.Context, _ *pluginv1.ConfigureRequest) (*pluginv1.ConfigureResponse, error) {
-	return &pluginv1.ConfigureResponse{}, nil
-}
 
 func (s *runtimeServer) providerForRequest() (*provider.Provider, error) {
 	return s.provider, nil
@@ -141,7 +132,7 @@ func (s *metadataServer) GetSeasons(ctx context.Context, req *pluginv1.GetSeason
 
 	results, err := p.GetSeasons(ctx, seasonsRequestFromProto(req, "tmdb"))
 	if err != nil {
-		return nil, err
+		return nil, episodeOrderError(err)
 	}
 
 	response := &pluginv1.GetSeasonsResponse{
@@ -173,7 +164,7 @@ func (s *metadataServer) GetEpisodes(ctx context.Context, req *pluginv1.GetEpiso
 
 	results, err := p.GetEpisodes(ctx, episodesRequestFromProto(req, "tmdb"))
 	if err != nil {
-		return nil, err
+		return nil, episodeOrderError(err)
 	}
 
 	response := &pluginv1.GetEpisodesResponse{
@@ -195,9 +186,63 @@ func (s *metadataServer) GetEpisodes(ctx context.Context, req *pluginv1.GetEpiso
 			StillPath:     tmdbCanonicalPath("still", result.StillPath),
 			ProviderIds:   providerIDs,
 			Ratings:       ratingsStruct(result.Ratings),
+			// The coordinates are set only for another ordering than the
+			// default; nil leaves the optional field absent.
+			AbsoluteNumber:       optionalInt32(result.AbsoluteNumber),
+			DefaultSeasonNumber:  optionalInt32(result.DefaultSeasonNumber),
+			DefaultEpisodeNumber: optionalInt32(result.DefaultEpisodeNumber),
 		})
 	}
 	return response, nil
+}
+
+func (s *metadataServer) ListEpisodeOrders(ctx context.Context, req *pluginv1.ListEpisodeOrdersRequest) (*pluginv1.ListEpisodeOrdersResponse, error) {
+	p, err := s.runtime.providerForRequest()
+	if err != nil {
+		return nil, err
+	}
+
+	orders, err := p.ListEpisodeOrders(ctx, metadata.EpisodeOrdersRequest{
+		ProviderIDs: providerIDsFromProto(req.GetProviderIds(), "tmdb", req.GetSeriesProviderId()),
+		Language:    req.GetLanguage(),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	response := &pluginv1.ListEpisodeOrdersResponse{
+		Orders: make([]*pluginv1.EpisodeOrder, 0, len(orders)),
+	}
+	for _, order := range orders {
+		response.Orders = append(response.Orders, &pluginv1.EpisodeOrder{
+			Id:           order.ID,
+			Name:         order.Name,
+			Kind:         order.Kind,
+			Description:  order.Description,
+			SeasonCount:  int32(order.SeasonCount),
+			EpisodeCount: int32(order.EpisodeCount),
+			IsDefault:    order.IsDefault,
+		})
+	}
+	return response, nil
+}
+
+// episodeOrderError answers an ordering TMDB does not know with NOT_FOUND, as
+// the EpisodeOrders contract requires, so the host can fall back to the
+// default order.
+func episodeOrderError(err error) error {
+	if errors.Is(err, provider.ErrUnknownOrdering) {
+		return status.Error(codes.NotFound, err.Error())
+	}
+	return err
+}
+
+func optionalInt32(value *int) *int32 {
+	if value == nil {
+		return nil
+	}
+	converted := int32(*value)
+	return &converted
 }
 
 func (s *metadataServer) GetImages(ctx context.Context, req *pluginv1.GetImagesRequest) (*pluginv1.GetImagesResponse, error) {
@@ -352,48 +397,12 @@ func (s *metadataServer) ResolveImageURLs(ctx context.Context, req *pluginv1.Res
 }
 
 func main() {
-	manifest, err := loadManifest()
-	if err != nil {
-		panic(err)
-	}
-
-	rs := &runtimeServer{
-		manifest: manifest,
-		provider: provider.NewProvider(),
-	}
-
+	rs := &runtimeServer{provider: provider.NewProvider()}
 	ms := &metadataServer{runtime: rs}
-	runtime.Serve(runtime.ServeConfig{
-		Servers: runtime.CapabilityServers{
-			Runtime:          rs,
-			MetadataProvider: ms,
-			ImageResolver:    ms,
-		},
-	})
-}
-
-func loadManifest() (*pluginv1.PluginManifest, error) {
-	manifest, err := publicmanifest.Load(manifestJSON)
-	if err != nil {
-		return nil, fmt.Errorf("load embedded manifest: %w", err)
-	}
-
-	if version != "" {
-		manifest.Version = version
-	}
-
-	executablePath, err := os.Executable()
-	if err != nil {
-		return nil, fmt.Errorf("resolve executable path: %w", err)
-	}
-	binaryData, err := os.ReadFile(executablePath)
-	if err != nil {
-		return nil, fmt.Errorf("read executable %q: %w", executablePath, err)
-	}
-	checksum := sha256.Sum256(binaryData)
-	manifest.Checksum = hex.EncodeToString(checksum[:])
-
-	return manifest, nil
+	runtime.ServeManifestWithOptions(manifestJSON, version, runtime.CapabilityServers{
+		MetadataProvider: ms,
+		ImageResolver:    ms,
+	}, runtime.WithEpisodeOrders(ms))
 }
 
 func metadataItemFromResult(result *metadata.MetadataResult, itemType string) (*pluginv1.MetadataItem, error) {
@@ -492,6 +501,7 @@ func seasonsRequestFromProto(req *pluginv1.GetSeasonsRequest, capabilityID strin
 		ProviderIDs: providerIDsFromProto(req.GetProviderIds(), capabilityID, req.GetSeriesProviderId()),
 		ContentType: "series",
 		Language:    req.GetLanguage(),
+		Ordering:    req.GetOrdering(),
 	}
 }
 
@@ -500,6 +510,7 @@ func episodesRequestFromProto(req *pluginv1.GetEpisodesRequest, capabilityID str
 		ProviderIDs:  providerIDsFromProto(req.GetProviderIds(), capabilityID, req.GetSeriesProviderId()),
 		SeasonNumber: int(req.GetSeasonNumber()),
 		Language:     req.GetLanguage(),
+		Ordering:     req.GetOrdering(),
 	}
 }
 

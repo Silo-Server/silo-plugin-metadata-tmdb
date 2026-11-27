@@ -7,7 +7,9 @@ require (
 	google.golang.org/protobuf v1.36.11
 )
 
-require google.golang.org/grpc v1.83.2 // indirect
+require google.golang.org/grpc v1.83.2
+
+require github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 
 require (
 	github.com/Silo-Server/silo-plugin-sdk v0.15.0
@@ -24,3 +26,5 @@ require (
 	golang.org/x/text v0.41.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 )
+
+replace github.com/Silo-Server/silo-plugin-sdk => github.com/Rhainland/silo-plugin-sdk v0.10.1-0.20261127135000-6835c0926dd6
